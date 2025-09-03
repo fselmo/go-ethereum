@@ -108,7 +108,8 @@ type Header struct {
 	// RequestsHash was added by EIP-7685 and is ignored in legacy headers.
 	RequestsHash *common.Hash `json:"requestsHash" rlp:"optional"`
 
-	BALHash *common.Hash `json:"balHash" rlp:"-"`
+	// BALHash was added by EIP-7928 and is ignored in legacy headers.
+	BALHash *common.Hash `json:"balHash" rlp:"optional"`
 }
 
 // field type overrides for gencodec

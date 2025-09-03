@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -493,6 +494,7 @@ func (g *Genesis) toBlockWithRoot(root common.Hash) *types.Block {
 	}
 	var (
 		withdrawals []*types.Withdrawal
+		body        *types.Body
 	)
 	if conf := g.Config; conf != nil {
 		num := big.NewInt(int64(g.Number))
@@ -518,8 +520,26 @@ func (g *Genesis) toBlockWithRoot(root common.Hash) *types.Block {
 		if conf.IsPrague(num, g.Timestamp) {
 			head.RequestsHash = &types.EmptyRequestsHash
 		}
+		// EIP-7928: Add BAL hash for Amsterdam fork
+		if conf.IsAmsterdam(num, g.Timestamp) {
+			// Create an empty BAL and compute its hash
+			emptyBAL := &bal.BlockAccessList{}
+			balHash := emptyBAL.Hash()
+			head.BALHash = &balHash
+			
+			// Create body with empty BAL
+			body = &types.Body{
+				Withdrawals: withdrawals,
+				AccessList:  &bal.BlockAccessList{},
+			}
+		} else {
+			body = &types.Body{Withdrawals: withdrawals}
+		}
+	} else {
+		body = &types.Body{Withdrawals: withdrawals}
 	}
-	return types.NewBlock(head, &types.Body{Withdrawals: withdrawals}, nil, trie.NewStackTrie(nil))
+	
+	return types.NewBlock(head, body, nil, trie.NewStackTrie(nil))
 }
 
 // Commit writes the block and state of a genesis specification to the database.

@@ -374,9 +374,12 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 	// Assign the final state root to header.
 	header.Root = state.IntermediateRoot(true)
 
-	// embed the block access list in the body
+	// embed the block access list in the body and set the BAL hash in the header
 	if chain.Config().IsAmsterdam(header.Number, header.Time) {
 		body.AccessList = state.ConstructionBlockAccessList().ToEncodingObj()
+		// Set the BAL hash in the header (EIP-7928)
+		balHash := body.AccessList.Hash()
+		header.BALHash = &balHash
 	}
 
 	// Assemble the final block.
