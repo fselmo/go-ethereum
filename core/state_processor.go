@@ -195,6 +195,12 @@ func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, b
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = result.UsedGas
 
+	// EIP-7778: Set GasSpent and Amsterdam flag for receipt encoding
+	if evm.ChainConfig().IsAmsterdam(blockNumber, blockTime) {
+		receipt.GasSpent = result.UsedGas
+		receipt.IsAmsterdam = true
+	}
+
 	if tx.Type() == types.BlobTxType {
 		receipt.BlobGasUsed = uint64(len(tx.BlobHashes()) * params.BlobTxBlobGasPerBlob)
 		receipt.BlobGasPrice = evm.Context.BlobBaseFee

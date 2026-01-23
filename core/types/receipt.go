@@ -58,6 +58,9 @@ type Receipt struct {
 	CumulativeGasUsed uint64 `json:"cumulativeGasUsed" gencodec:"required"`
 	Bloom             Bloom  `json:"logsBloom"         gencodec:"required"`
 	Logs              []*Log `json:"logs"              gencodec:"required"`
+	// EIP-7778: Gas spent after refunds (consensus field for Amsterdam+)
+	GasSpent    uint64 `json:"gasSpent,omitempty"`
+	IsAmsterdam bool   `json:"-"` // Internal flag for RLP encoding format
 
 	// Implementation fields: These fields are added by geth when processing a transaction.
 	TxHash            common.Hash    `json:"transactionHash" gencodec:"required"`
@@ -95,6 +98,15 @@ type receiptRLP struct {
 	Logs              []*Log
 }
 
+// receiptRLPAmsterdam is the consensus encoding of a receipt for Amsterdam+ (EIP-7778).
+type receiptRLPAmsterdam struct {
+	PostStateOrStatus []byte
+	CumulativeGasUsed uint64
+	Bloom             Bloom
+	Logs              []*Log
+	GasSpent          uint64
+}
+
 // storedReceiptRLP is the storage encoding of a receipt.
 type storedReceiptRLP struct {
 	PostStateOrStatus []byte
@@ -121,22 +133,31 @@ func NewReceipt(root []byte, failed bool, cumulativeGasUsed uint64) *Receipt {
 // EncodeRLP implements rlp.Encoder, and flattens the consensus fields of a receipt
 // into an RLP stream. If no post state is present, byzantium fork is assumed.
 func (r *Receipt) EncodeRLP(w io.Writer) error {
-	data := &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs}
 	if r.Type == LegacyTxType {
+		if r.IsAmsterdam {
+			data := &receiptRLPAmsterdam{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs, r.GasSpent}
+			return rlp.Encode(w, data)
+		}
+		data := &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs}
 		return rlp.Encode(w, data)
 	}
 	buf := encodeBufferPool.Get().(*bytes.Buffer)
 	defer encodeBufferPool.Put(buf)
 	buf.Reset()
-	if err := r.encodeTyped(data, buf); err != nil {
+	if err := r.encodeTyped(buf); err != nil {
 		return err
 	}
 	return rlp.Encode(w, buf.Bytes())
 }
 
 // encodeTyped writes the canonical encoding of a typed receipt to w.
-func (r *Receipt) encodeTyped(data *receiptRLP, w *bytes.Buffer) error {
+func (r *Receipt) encodeTyped(w *bytes.Buffer) error {
 	w.WriteByte(r.Type)
+	if r.IsAmsterdam {
+		data := &receiptRLPAmsterdam{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs, r.GasSpent}
+		return rlp.Encode(w, data)
+	}
+	data := &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs}
 	return rlp.Encode(w, data)
 }
 
@@ -145,9 +166,8 @@ func (r *Receipt) MarshalBinary() ([]byte, error) {
 	if r.Type == LegacyTxType {
 		return rlp.EncodeToBytes(r)
 	}
-	data := &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs}
 	var buf bytes.Buffer
-	err := r.encodeTyped(data, &buf)
+	err := r.encodeTyped(&buf)
 	return buf.Bytes(), err
 }
 
@@ -361,6 +381,20 @@ func (rs Receipts) Len() int { return len(rs) }
 // EncodeIndex encodes the i'th receipt to w.
 func (rs Receipts) EncodeIndex(i int, w *bytes.Buffer) {
 	r := rs[i]
+	// EIP-7778: Use Amsterdam encoding if flagged
+	if r.IsAmsterdam {
+		data := &receiptRLPAmsterdam{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs, r.GasSpent}
+		if r.Type == LegacyTxType {
+			rlp.Encode(w, data)
+			return
+		}
+		w.WriteByte(r.Type)
+		switch r.Type {
+		case AccessListTxType, DynamicFeeTxType, BlobTxType, SetCodeTxType:
+			rlp.Encode(w, data)
+		}
+		return
+	}
 	data := &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs}
 	if r.Type == LegacyTxType {
 		rlp.Encode(w, data)
