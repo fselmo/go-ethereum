@@ -1006,7 +1006,8 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "bpo3", timestamp: c.BPO3Time, config: bsc.BPO3},
 		{name: "bpo4", timestamp: c.BPO4Time, config: bsc.BPO4},
 		{name: "bpo5", timestamp: c.BPO5Time, config: bsc.BPO5},
-		{name: "amsterdam", timestamp: c.AmsterdamTime, config: bsc.Amsterdam},
+		// Amsterdam does not define its own blob schedule; it inherits the
+		// latest active BPO (or Osaka/Prague) values at runtime.
 	} {
 		if cur.config != nil {
 			if err := cur.config.validate(); err != nil {
@@ -1171,23 +1172,45 @@ func (c *ChainConfig) LatestFork(time uint64) forks.Fork {
 
 // BlobConfig returns the blob config associated with the provided fork.
 func (c *ChainConfig) BlobConfig(fork forks.Fork) *BlobConfig {
+	s := c.BlobScheduleConfig
 	switch fork {
 	case forks.BPO5:
-		return c.BlobScheduleConfig.BPO5
+		return s.BPO5
 	case forks.BPO4:
-		return c.BlobScheduleConfig.BPO4
+		return s.BPO4
 	case forks.BPO3:
-		return c.BlobScheduleConfig.BPO3
+		return s.BPO3
 	case forks.BPO2:
-		return c.BlobScheduleConfig.BPO2
+		return s.BPO2
 	case forks.BPO1:
-		return c.BlobScheduleConfig.BPO1
+		return s.BPO1
 	case forks.Osaka:
-		return c.BlobScheduleConfig.Osaka
+		return s.Osaka
 	case forks.Prague:
-		return c.BlobScheduleConfig.Prague
+		return s.Prague
 	case forks.Cancun:
-		return c.BlobScheduleConfig.Cancun
+		return s.Cancun
+	case forks.Amsterdam:
+		// Amsterdam does not define its own blob schedule; fall back to the
+		// latest active BPO, then Osaka, then Prague.
+		for _, check := range []struct {
+			time   *uint64
+			config *BlobConfig
+		}{
+			{c.BPO5Time, s.BPO5},
+			{c.BPO4Time, s.BPO4},
+			{c.BPO3Time, s.BPO3},
+			{c.BPO2Time, s.BPO2},
+			{c.BPO1Time, s.BPO1},
+		} {
+			if check.time != nil && check.config != nil {
+				return check.config
+			}
+		}
+		if s.Osaka != nil {
+			return s.Osaka
+		}
+		return s.Prague
 	default:
 		return nil
 	}
