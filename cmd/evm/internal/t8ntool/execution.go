@@ -269,6 +269,9 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			continue
 		}
 		gasUsed += receipt.GasUsed
+		if receipt.Logs == nil {
+			receipt.Logs = []*types.Log{}
+		}
 		includedTxs = append(includedTxs, tx)
 		if hashError != nil {
 			return nil, nil, nil, NewError(ErrorMissingBlockhash, hashError)
