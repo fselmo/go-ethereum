@@ -32,6 +32,8 @@ func (e ExecutionResult) MarshalJSON() ([]byte, error) {
 		CurrentBlobGasUsed   *math.HexOrDecimal64  `json:"blobGasUsed,omitempty"`
 		RequestsHash         *common.Hash          `json:"requestsHash,omitempty"`
 		Requests             []hexutil.Bytes       `json:"requests"`
+		BlockAccessListHash  *common.Hash          `json:"blockAccessListHash,omitempty"`
+		BlockAccessList      json.RawMessage       `json:"blockAccessList,omitempty"`
 	}
 	var enc ExecutionResult
 	enc.StateRoot = e.StateRoot
@@ -54,6 +56,8 @@ func (e ExecutionResult) MarshalJSON() ([]byte, error) {
 			enc.Requests[k] = v
 		}
 	}
+	enc.BlockAccessListHash = e.BlockAccessListHash
+	enc.BlockAccessList = e.BlockAccessList
 	return json.Marshal(&enc)
 }
 
@@ -75,6 +79,8 @@ func (e *ExecutionResult) UnmarshalJSON(input []byte) error {
 		CurrentBlobGasUsed   *math.HexOrDecimal64  `json:"blobGasUsed,omitempty"`
 		RequestsHash         *common.Hash          `json:"requestsHash,omitempty"`
 		Requests             []hexutil.Bytes       `json:"requests"`
+		BlockAccessListHash  *common.Hash          `json:"blockAccessListHash,omitempty"`
+		BlockAccessList      json.RawMessage       `json:"blockAccessList,omitempty"`
 	}
 	var dec ExecutionResult
 	if err := json.Unmarshal(input, &dec); err != nil {
@@ -129,6 +135,12 @@ func (e *ExecutionResult) UnmarshalJSON(input []byte) error {
 		for k, v := range dec.Requests {
 			e.Requests[k] = v
 		}
+	}
+	if dec.BlockAccessListHash != nil {
+		e.BlockAccessListHash = dec.BlockAccessListHash
+	}
+	if dec.BlockAccessList != nil {
+		e.BlockAccessList = dec.BlockAccessList
 	}
 	return nil
 }

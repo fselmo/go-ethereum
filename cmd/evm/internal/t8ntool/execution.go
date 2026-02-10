@@ -17,6 +17,7 @@
 package t8ntool
 
 import (
+	"encoding/json"
 	"fmt"
 	stdmath "math"
 	"math/big"
@@ -32,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -69,6 +71,8 @@ type ExecutionResult struct {
 	CurrentBlobGasUsed   *math.HexOrDecimal64  `json:"blobGasUsed,omitempty"`
 	RequestsHash         *common.Hash          `json:"requestsHash,omitempty"`
 	Requests             [][]byte              `json:"requests"`
+	BlockAccessListHash  *common.Hash          `json:"blockAccessListHash,omitempty"`
+	BlockAccessList      json.RawMessage       `json:"blockAccessList,omitempty"`
 }
 
 type executionResultMarshaling struct {
@@ -214,7 +218,21 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		chainConfig.DAOForkBlock.Cmp(new(big.Int).SetUint64(pre.Env.Number)) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
-	evm := vm.NewEVM(vmContext, statedb, chainConfig, vmConfig)
+	// Set up BAL (Block Access List) tracer for Amsterdam (EIP-7928).
+	// The hooked state wraps statedb so all state reads/writes are captured.
+	var balTracer *core.BlockAccessListTracer
+	var evmState vm.StateDB = statedb
+	if chainConfig.IsAmsterdam(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) {
+		var balHooks *tracing.Hooks
+		balTracer, balHooks = core.NewBlockAccessListTracer()
+		evmState = state.NewHookedState(statedb, balHooks)
+		if vmConfig.Tracer != nil {
+			vmConfig.Tracer = composeHooks(vmConfig.Tracer, balHooks)
+		} else {
+			vmConfig.Tracer = balHooks
+		}
+	}
+	evm := vm.NewEVM(vmContext, evmState, chainConfig, vmConfig)
 	if beaconRoot := pre.Env.ParentBeaconBlockRoot; beaconRoot != nil {
 		core.ProcessBeaconBlockRoot(*beaconRoot, evm)
 	}
@@ -282,6 +300,12 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 
 	statedb.IntermediateRoot(chainConfig.IsEIP158(vmContext.BlockNumber))
 
+	// Signal post-tx phase for BAL tracer so system calls and withdrawals
+	// are recorded under the final BAL index.
+	if balTracer != nil {
+		balTracer.SetPostTx()
+	}
+
 	// Add mining reward? (-1 means rewards are disabled)
 	if miningReward >= 0 {
 		// Add mining reward. The mining reward may be `0`, which only makes a difference in the cases
@@ -302,15 +326,15 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			reward.Sub(reward, new(big.Int).SetUint64(ommer.Delta))
 			reward.Mul(reward, blockReward)
 			reward.Rsh(reward, 3)
-			statedb.AddBalance(ommer.Address, uint256.MustFromBig(reward), tracing.BalanceIncreaseRewardMineUncle)
+			evmState.AddBalance(ommer.Address, uint256.MustFromBig(reward), tracing.BalanceIncreaseRewardMineUncle)
 		}
-		statedb.AddBalance(pre.Env.Coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
+		evmState.AddBalance(pre.Env.Coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
 	}
 	// Apply withdrawals
 	for _, w := range pre.Env.Withdrawals {
 		// Amount is in gwei, turn into wei
 		amount := new(big.Int).Mul(new(big.Int).SetUint64(w.Amount), big.NewInt(params.GWei))
-		statedb.AddBalance(w.Address, uint256.MustFromBig(amount), tracing.BalanceIncreaseWithdrawal)
+		evmState.AddBalance(w.Address, uint256.MustFromBig(amount), tracing.BalanceIncreaseWithdrawal)
 
 		if isEIP4762 {
 			statedb.AccessEvents().AddAccount(w.Address, true, stdmath.MaxUint64)
@@ -374,6 +398,18 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		}
 		execRs.Requests = requests
 	}
+	// Build block access list for Amsterdam (EIP-7928).
+	if balTracer != nil {
+		balTracer.OnBlockFinalization()
+		encodedBAL := balTracer.AccessList().ToEncodingObj()
+		balJSON, err := marshalBALForT8N(encodedBAL)
+		if err != nil {
+			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not marshal block access list: %v", err))
+		}
+		execRs.BlockAccessList = json.RawMessage(balJSON)
+		h := encodedBAL.Hash()
+		execRs.BlockAccessListHash = &h
+	}
 
 	// Re-create statedb instance with new root for MPT mode
 	statedb, err = state.New(root, statedb.Database())
@@ -426,6 +462,142 @@ func rlpHash(x any) (h common.Hash) {
 	rlp.Encode(hw, x)
 	hw.Sum(h[:0])
 	return h
+}
+
+// marshalBALForT8N converts a BlockAccessList to JSON matching the format
+// expected by EELS (execution-specs) t8n tool output. Field names and value
+// formats differ from geth's internal BAL encoding types.
+func marshalBALForT8N(encoded *bal.BlockAccessList) ([]byte, error) {
+	var result []map[string]any
+	for _, account := range *encoded {
+		entry := map[string]any{
+			"address": account.Address,
+		}
+		if len(account.StorageChanges) > 0 {
+			var storageChanges []map[string]any
+			for _, sc := range account.StorageChanges {
+				slotChanges := make([]map[string]any, len(sc.Accesses))
+				for j, a := range sc.Accesses {
+					slotChanges[j] = map[string]any{
+						"blockAccessIndex": int(a.TxIdx),
+						"postValue":        a.ValueAfter,
+					}
+				}
+				storageChanges = append(storageChanges, map[string]any{
+					"slot":        sc.Slot,
+					"slotChanges": slotChanges,
+				})
+			}
+			entry["storageChanges"] = storageChanges
+		}
+		if len(account.StorageReads) > 0 {
+			entry["storageReads"] = account.StorageReads
+		}
+		if len(account.BalanceChanges) > 0 {
+			changes := make([]map[string]any, len(account.BalanceChanges))
+			for j, bc := range account.BalanceChanges {
+				changes[j] = map[string]any{
+					"blockAccessIndex": int(bc.TxIdx),
+					"postBalance":      bc.Balance.ToBig().String(),
+				}
+			}
+			entry["balanceChanges"] = changes
+		}
+		if len(account.NonceChanges) > 0 {
+			changes := make([]map[string]any, len(account.NonceChanges))
+			for j, nc := range account.NonceChanges {
+				changes[j] = map[string]any{
+					"blockAccessIndex": int(nc.TxIdx),
+					"postNonce":        nc.Nonce,
+				}
+			}
+			entry["nonceChanges"] = changes
+		}
+		if len(account.CodeChanges) > 0 {
+			changes := make([]map[string]any, len(account.CodeChanges))
+			for j, cc := range account.CodeChanges {
+				changes[j] = map[string]any{
+					"blockAccessIndex": int(cc.TxIdx),
+					"newCode":          fmt.Sprintf("0x%x", cc.Code),
+				}
+			}
+			entry["codeChanges"] = changes
+		}
+		result = append(result, entry)
+	}
+	if result == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(result)
+}
+
+func composeHooks(a, b *tracing.Hooks) *tracing.Hooks {
+	return &tracing.Hooks{
+		OnTxStart: func(vm *tracing.VMContext, tx *types.Transaction, from common.Address) {
+			if a.OnTxStart != nil {
+				a.OnTxStart(vm, tx, from)
+			}
+			if b.OnTxStart != nil {
+				b.OnTxStart(vm, tx, from)
+			}
+		},
+		OnTxEnd: func(receipt *types.Receipt, err error) {
+			if a.OnTxEnd != nil {
+				a.OnTxEnd(receipt, err)
+			}
+			if b.OnTxEnd != nil {
+				b.OnTxEnd(receipt, err)
+			}
+		},
+		OnEnter: func(depth int, typ byte, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
+			if a.OnEnter != nil {
+				a.OnEnter(depth, typ, from, to, input, gas, value)
+			}
+			if b.OnEnter != nil {
+				b.OnEnter(depth, typ, from, to, input, gas, value)
+			}
+		},
+		OnExit: func(depth int, output []byte, gasUsed uint64, err error, reverted bool) {
+			if a.OnExit != nil {
+				a.OnExit(depth, output, gasUsed, err, reverted)
+			}
+			if b.OnExit != nil {
+				b.OnExit(depth, output, gasUsed, err, reverted)
+			}
+		},
+		OnOpcode: func(pc uint64, op byte, gas, cost uint64, scope tracing.OpContext, rData []byte, depth int, err error) {
+			if a.OnOpcode != nil {
+				a.OnOpcode(pc, op, gas, cost, scope, rData, depth, err)
+			}
+			if b.OnOpcode != nil {
+				b.OnOpcode(pc, op, gas, cost, scope, rData, depth, err)
+			}
+		},
+		OnFault: func(pc uint64, op byte, gas, cost uint64, scope tracing.OpContext, depth int, err error) {
+			if a.OnFault != nil {
+				a.OnFault(pc, op, gas, cost, scope, depth, err)
+			}
+			if b.OnFault != nil {
+				b.OnFault(pc, op, gas, cost, scope, depth, err)
+			}
+		},
+		OnSystemCallStart: func() {
+			if a.OnSystemCallStart != nil {
+				a.OnSystemCallStart()
+			}
+			if b.OnSystemCallStart != nil {
+				b.OnSystemCallStart()
+			}
+		},
+		OnSystemCallEnd: func() {
+			if a.OnSystemCallEnd != nil {
+				a.OnSystemCallEnd()
+			}
+			if b.OnSystemCallEnd != nil {
+				b.OnSystemCallEnd()
+			}
+		},
+	}
 }
 
 // calcDifficulty is based on ethash.CalcDifficulty. This method is used in case
