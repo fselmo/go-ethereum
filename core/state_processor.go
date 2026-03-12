@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/telemetry"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/holiman/uint256"
 )
 
 // StateProcessor is a basic Processor, which takes care of transitioning
@@ -345,6 +346,22 @@ func processRequestsSystemCall(requests *[][]byte, evm *vm.EVM, requestType byte
 	copy(requestsData[1:], ret)
 	*requests = append(*requests, requestsData)
 	return nil
+}
+
+// ProcessWithdrawals applies EIP-4895 withdrawals to the state. It always reads
+// the target account first (regardless of withdrawal amount) so that BAL tracers
+// (EIP-7928) can observe the account access.
+func ProcessWithdrawals(statedb vm.StateDB, withdrawals []*types.Withdrawal) {
+	for _, w := range withdrawals {
+		// Always read the target account regardless of withdrawal amount to
+		// include it in the BAL (EIP-7928).
+		statedb.GetBalance(w.Address)
+
+		// Convert amount from gwei to wei.
+		amount := new(uint256.Int).SetUint64(w.Amount)
+		amount = amount.Mul(amount, uint256.NewInt(params.GWei))
+		statedb.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
+	}
 }
 
 var depositTopic = common.HexToHash("0x649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5")

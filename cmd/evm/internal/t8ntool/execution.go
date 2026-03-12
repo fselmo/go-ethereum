@@ -74,6 +74,8 @@ type ExecutionResult struct {
 	CurrentBlobGasUsed   *math.HexOrDecimal64  `json:"blobGasUsed,omitempty"`
 	RequestsHash         *common.Hash          `json:"requestsHash,omitempty"`
 	Requests             [][]byte              `json:"requests"`
+	BlockAccessListHash  *common.Hash          `json:"blockAccessListHash,omitempty"`
+	BlockAccessList      hexutil.Bytes         `json:"blockAccessList,omitempty"`
 }
 
 type executionResultMarshaling struct {
@@ -191,6 +193,10 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		rnd := common.BigToHash(pre.Env.Random)
 		vmContext.Random = &rnd
 	}
+	// If slotNumber is defined, add it to the vmContext (EIP-7843).
+	if pre.Env.SlotNumber != nil {
+		vmContext.Slotnum = *pre.Env.SlotNumber
+	}
 	// Calculate the BlobBaseFee
 	var excessBlobGas uint64
 	if pre.Env.ExcessBlobGas != nil {
@@ -228,7 +234,16 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		chainConfig.DAOForkBlock.Cmp(new(big.Int).SetUint64(pre.Env.Number)) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
-	evm := vm.NewEVM(vmContext, statedb, chainConfig, vmConfig)
+	// Set up BAL (Block Access List) tracer for Amsterdam (EIP-7928).
+	var balTracer *core.BlockAccessListTracer
+	if chainConfig.IsAmsterdam(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) {
+		balTracer, vmConfig.Tracer = core.NewBlockAccessListTracer()
+	}
+	var tracingStateDB = vm.StateDB(statedb)
+	if hooks := vmConfig.Tracer; hooks != nil {
+		tracingStateDB = state.NewHookedState(statedb, hooks)
+	}
+	evm := vm.NewEVM(vmContext, tracingStateDB, chainConfig, vmConfig)
 	if beaconRoot := pre.Env.ParentBeaconBlockRoot; beaconRoot != nil {
 		core.ProcessBeaconBlockRoot(*beaconRoot, evm)
 	}
@@ -315,17 +330,14 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 			reward.Sub(reward, new(big.Int).SetUint64(ommer.Delta))
 			reward.Mul(reward, blockReward)
 			reward.Rsh(reward, 3)
-			statedb.AddBalance(ommer.Address, uint256.MustFromBig(reward), tracing.BalanceIncreaseRewardMineUncle)
+			tracingStateDB.AddBalance(ommer.Address, uint256.MustFromBig(reward), tracing.BalanceIncreaseRewardMineUncle)
 		}
-		statedb.AddBalance(pre.Env.Coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
+		tracingStateDB.AddBalance(pre.Env.Coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
 	}
 	// Apply withdrawals
-	for _, w := range pre.Env.Withdrawals {
-		// Amount is in gwei, turn into wei
-		amount := new(big.Int).Mul(new(big.Int).SetUint64(w.Amount), big.NewInt(params.GWei))
-		statedb.AddBalance(w.Address, uint256.MustFromBig(amount), tracing.BalanceIncreaseWithdrawal)
-
-		if isEIP4762 {
+	core.ProcessWithdrawals(tracingStateDB, pre.Env.Withdrawals)
+	if isEIP4762 {
+		for _, w := range pre.Env.Withdrawals {
 			statedb.AccessEvents().AddAccount(w.Address, true, stdmath.MaxUint64)
 		}
 	}
@@ -382,6 +394,20 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		h := types.CalcRequestsHash(requests)
 		execRs.RequestsHash = &h
 		execRs.Requests = requests
+	}
+	// Build block access list for Amsterdam (EIP-7928).
+	// Output the BAL as RLP-encoded bytes; the testing framework handles
+	// JSON serialization.
+	if balTracer != nil {
+		balTracer.OnBlockFinalization()
+		encodedBAL := balTracer.AccessList().ToEncodingObj()
+		rlpBytes, err := rlp.EncodeToBytes(encodedBAL)
+		if err != nil {
+			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not encode block access list: %v", err))
+		}
+		execRs.BlockAccessList = rlpBytes
+		h := encodedBAL.Hash()
+		execRs.BlockAccessListHash = &h
 	}
 
 	// Re-create statedb instance with new root for MPT mode
