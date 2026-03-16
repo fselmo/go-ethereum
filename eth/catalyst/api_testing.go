@@ -39,7 +39,7 @@ func newTestingAPI(backend *eth.Ethereum) rpc.API {
 		Namespace:     "testing",
 		Service:       &testingAPI{backend},
 		Version:       "1.0",
-		Authenticated: true,
+		Authenticated: false,
 	}
 }
 

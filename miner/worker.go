@@ -437,7 +437,12 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 	}
 	isOversizedAccessList := env.alTracer != nil && env.size+tx.Size()+uint64(env.alTracer.AccessList().ToEncodingObj().EncodedSize()) >= params.MaxBlockSize-maxBlockSizeBufferZone
 	if isOversizedAccessList {
-		env.state.RevertToSnapshot(snap)
+		// NOTE: We cannot revert the state here because Finalise() (called
+		// inside ApplyTransaction on success) resets the journal, invalidating
+		// the snapshot. The transaction is already committed to the state.
+		// In the normal mining path, the caller (commitTransactions) will
+		// stop adding more transactions. In the testing/override path, the
+		// block build returns an error and the state is discarded.
 		env.gasPool.SetGas(gp)
 		return nil, errAccessListOversized
 	}
