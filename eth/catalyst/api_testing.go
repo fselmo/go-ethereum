@@ -39,7 +39,7 @@ func newTestingAPI(backend *eth.Ethereum) rpc.API {
 		Namespace:     "testing",
 		Service:       &testingAPI{backend},
 		Version:       "1.0",
-		Authenticated: false,
+		Authenticated: true,
 	}
 }
 
@@ -79,7 +79,7 @@ func (api *testingAPI) BuildBlockV1(parentHash common.Hash, payloadAttributes en
 		Random:       payloadAttributes.Random,
 		Withdrawals:  payloadAttributes.Withdrawals,
 		BeaconRoot:   payloadAttributes.BeaconRoot,
-		SlotNum:      slotNum,
+		SlotNum:      payloadAttributes.SlotNumber,
 	}
 	return api.eth.Miner().BuildTestingPayload(args, txs, buildEmpty, extra)
 }
