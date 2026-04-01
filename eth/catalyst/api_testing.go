@@ -67,6 +67,11 @@ func (api *testingAPI) BuildBlockV1(parentHash common.Hash, payloadAttributes en
 	if extraData != nil {
 		extra = *extraData
 	}
+	var slotNum *uint64
+	if payloadAttributes.SlotNumber != nil {
+		sn := uint64(*payloadAttributes.SlotNumber)
+		slotNum = &sn
+	}
 	args := &miner.BuildPayloadArgs{
 		Parent:       parentHash,
 		Timestamp:    payloadAttributes.Timestamp,

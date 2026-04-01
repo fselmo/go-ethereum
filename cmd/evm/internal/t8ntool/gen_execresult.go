@@ -34,6 +34,7 @@ func (e ExecutionResult) MarshalJSON() ([]byte, error) {
 		Requests             []hexutil.Bytes       `json:"requests"`
 		BlockAccessListHash  *common.Hash          `json:"blockAccessListHash,omitempty"`
 		BlockAccessList      hexutil.Bytes         `json:"blockAccessList,omitempty"`
+		SlotNumber           *math.HexOrDecimal64  `json:"currentSlotNumber,omitempty"`
 	}
 	var enc ExecutionResult
 	enc.StateRoot = e.StateRoot
@@ -58,6 +59,7 @@ func (e ExecutionResult) MarshalJSON() ([]byte, error) {
 	}
 	enc.BlockAccessListHash = e.BlockAccessListHash
 	enc.BlockAccessList = e.BlockAccessList
+	enc.SlotNumber = e.SlotNumber
 	return json.Marshal(&enc)
 }
 
@@ -81,6 +83,7 @@ func (e *ExecutionResult) UnmarshalJSON(input []byte) error {
 		Requests             []hexutil.Bytes       `json:"requests"`
 		BlockAccessListHash  *common.Hash          `json:"blockAccessListHash,omitempty"`
 		BlockAccessList      hexutil.Bytes         `json:"blockAccessList,omitempty"`
+		SlotNumber           *math.HexOrDecimal64  `json:"currentSlotNumber,omitempty"`
 	}
 	var dec ExecutionResult
 	if err := json.Unmarshal(input, &dec); err != nil {
@@ -141,6 +144,9 @@ func (e *ExecutionResult) UnmarshalJSON(input []byte) error {
 	}
 	if dec.BlockAccessList != nil {
 		e.BlockAccessList = dec.BlockAccessList
+	}
+	if dec.SlotNumber != nil {
+		e.SlotNumber = dec.SlotNumber
 	}
 	return nil
 }

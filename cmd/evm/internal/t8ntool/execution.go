@@ -71,6 +71,7 @@ type ExecutionResult struct {
 	Requests             [][]byte              `json:"requests"`
 	BlockAccessListHash  *common.Hash          `json:"blockAccessListHash,omitempty"`
 	BlockAccessList      hexutil.Bytes         `json:"blockAccessList,omitempty"`
+	SlotNumber           *math.HexOrDecimal64  `json:"currentSlotNumber,omitempty"`
 }
 
 type executionResultMarshaling struct {
@@ -180,8 +181,13 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		vmContext.Random = &rnd
 	}
 	// If slotNumber is defined, add it to the vmContext (EIP-7843).
+	// Default to block number for Amsterdam if not explicitly set.
 	if pre.Env.SlotNumber != nil {
 		vmContext.Slotnum = *pre.Env.SlotNumber
+	} else if chainConfig.IsAmsterdam(vmContext.BlockNumber, pre.Env.Timestamp) {
+		sn := pre.Env.Number
+		pre.Env.SlotNumber = &sn
+		vmContext.Slotnum = sn
 	}
 	// Calculate the BlobBaseFee
 	var excessBlobGas uint64
@@ -395,6 +401,12 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		execRs.BlockAccessList = rlpBytes
 		h := encodedBAL.Hash()
 		execRs.BlockAccessListHash = &h
+	}
+
+	// Output slot number if set (EIP-7843).
+	if pre.Env.SlotNumber != nil {
+		sn := math.HexOrDecimal64(*pre.Env.SlotNumber)
+		execRs.SlotNumber = &sn
 	}
 
 	// Re-create statedb instance with new root for MPT mode
