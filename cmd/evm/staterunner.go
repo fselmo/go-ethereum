@@ -57,6 +57,7 @@ var stateTestCommand = &cli.Command{
 		DumpFlag,
 		forkFlag,
 		HumanReadableFlag,
+		NDJSONFlag,
 		idxFlag,
 		RunFlag,
 		WorkersFlag,
@@ -77,7 +78,9 @@ func stateTestCmd(ctx *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		report(ctx, results)
+		if !ctx.Bool(NDJSONFlag.Name) {
+			report(ctx, results)
+		}
 		return nil
 	}
 	// Otherwise, read filenames from stdin and execute back-to-back.
@@ -212,6 +215,9 @@ func runStateTest(ctx *cli.Context, fname string) ([]testResult, error) {
 					return
 				}
 			})
+			if ctx.Bool(NDJSONFlag.Name) {
+				reportNDJSON(*result)
+			}
 			results = append(results, *result)
 		}
 	}
