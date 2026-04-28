@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto/keccak"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -195,7 +196,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 	}
 	// If slotNumber is defined, add it to the vmContext (EIP-7843).
 	if pre.Env.SlotNumber != nil {
-		vmContext.Slotnum = *pre.Env.SlotNumber
+		vmContext.SlotNum = *pre.Env.SlotNumber
 	}
 	// Calculate the BlobBaseFee
 	var excessBlobGas uint64
@@ -234,10 +235,13 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		chainConfig.DAOForkBlock.Cmp(new(big.Int).SetUint64(pre.Env.Number)) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
-	// Set up BAL (Block Access List) tracer for Amsterdam (EIP-7928).
-	var balTracer *core.BlockAccessListTracer
-	if chainConfig.IsAmsterdam(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) {
-		balTracer, vmConfig.Tracer = core.NewBlockAccessListTracer()
+	// Set up BAL (Block Access List) construction for Amsterdam (EIP-7928).
+	isAmsterdam := chainConfig.IsAmsterdam(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp)
+	var computedAccessList bal.ConstructionBlockAccessList
+	if isAmsterdam {
+		computedAccessList = make(bal.ConstructionBlockAccessList)
+		// Wrap the statedb's reader with a tracker so reads are recorded for the BAL.
+		statedb = statedb.WithReader(state.NewReaderWithTracker(statedb.Reader()))
 	}
 	var tracingStateDB = vm.StateDB(statedb)
 	if hooks := vmConfig.Tracer; hooks != nil {
@@ -245,14 +249,20 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 	}
 	evm := vm.NewEVM(vmContext, tracingStateDB, chainConfig, vmConfig)
 	if beaconRoot := pre.Env.ParentBeaconBlockRoot; beaconRoot != nil {
-		core.ProcessBeaconBlockRoot(*beaconRoot, evm)
+		mutations := core.ProcessBeaconBlockRoot(*beaconRoot, evm)
+		if isAmsterdam {
+			computedAccessList.AccumulateMutations(mutations, 0)
+		}
 	}
 	if pre.Env.BlockHashes != nil && chainConfig.IsPrague(new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp) {
 		var (
 			prevNumber = pre.Env.Number - 1
 			prevHash   = pre.Env.BlockHashes[math.HexOrDecimal64(prevNumber)]
 		)
-		core.ProcessParentBlockHash(prevHash, evm)
+		mutations := core.ProcessParentBlockHash(prevHash, evm)
+		if isAmsterdam {
+			computedAccessList.AccumulateMutations(mutations, 0)
+		}
 	}
 	for i := 0; txIt.Next(); i++ {
 		tx, err := txIt.Tx()
@@ -300,6 +310,9 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		if receipt.Logs == nil {
 			receipt.Logs = []*types.Log{}
 		}
+		if isAmsterdam {
+			computedAccessList.AccumulateMutations(mutations, uint16(len(includedTxs))+1)
+		}
 		includedTxs = append(includedTxs, tx)
 		if hashError != nil {
 			return nil, nil, nil, NewError(ErrorMissingBlockhash, hashError)
@@ -336,6 +349,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 	}
 	// Apply withdrawals
 	core.ProcessWithdrawals(tracingStateDB, pre.Env.Withdrawals)
+	postMut := statedb.Finalise(true)
 	if isEIP4762 {
 		for _, w := range pre.Env.Withdrawals {
 			statedb.AccessEvents().AddAccount(w.Address, true, stdmath.MaxUint64)
@@ -358,9 +372,17 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		if err := core.ProcessWithdrawalQueue(&requests, evm); err != nil {
 			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not process withdrawal requests: %v", err))
 		}
+		postMut.Merge(wqMut)
 		// EIP-7251
 		if err := core.ProcessConsolidationQueue(&requests, evm); err != nil {
 			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not process consolidation requests: %v", err))
+		}
+		postMut.Merge(cqMut)
+	}
+	if isAmsterdam {
+		computedAccessList.AccumulateMutations(postMut, uint16(len(includedTxs))+1)
+		if rt, ok := statedb.Reader().(state.StateReaderTracker); ok {
+			computedAccessList.AccumulateReads(rt.GetStateAccessList())
 		}
 	}
 
@@ -398,9 +420,8 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 	// Build block access list for Amsterdam (EIP-7928).
 	// Output the BAL as RLP-encoded bytes; the testing framework handles
 	// JSON serialization.
-	if balTracer != nil {
-		balTracer.OnBlockFinalization()
-		encodedBAL := balTracer.AccessList().ToEncodingObj()
+	if isAmsterdam {
+		encodedBAL := computedAccessList.ToEncodingObj()
 		rlpBytes, err := rlp.EncodeToBytes(encodedBAL)
 		if err != nil {
 			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not encode block access list: %v", err))
