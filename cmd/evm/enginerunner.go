@@ -64,6 +64,7 @@ var engineTestCommand = &cli.Command{
 
 func engineTestCmd(ctx *cli.Context) error {
 	path := ctx.Args().First()
+	reportExecution(log.Root().Handler())
 
 	// If path is provided, run the tests at that path.
 	if len(path) != 0 {
@@ -185,7 +186,7 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 	tracer := tracerFromFlags(ctx)
 
 	if ctx.IsSet(FuzzFlag.Name) {
-		log.SetDefault(log.NewLogger(log.DiscardHandler()))
+		reportExecution(log.DiscardHandler())
 	}
 
 	keys := slices.Sorted(maps.Keys(testsByName))

@@ -52,6 +52,7 @@ var blockTestCommand = &cli.Command{
 
 func blockTestCmd(ctx *cli.Context) error {
 	path := ctx.Args().First()
+	reportExecution(log.Root().Handler())
 
 	// If path is provided, run the tests at that path.
 	if len(path) != 0 {
@@ -160,7 +161,7 @@ func runBlockTest(ctx *cli.Context, fname string) ([]testResult, error) {
 
 	// Suppress INFO logs during fuzzing
 	if ctx.Bool(FuzzFlag.Name) {
-		log.SetDefault(log.NewLogger(log.DiscardHandler()))
+		reportExecution(log.DiscardHandler())
 	}
 
 	// Pull out keys to sort and ensure tests are run in order.
