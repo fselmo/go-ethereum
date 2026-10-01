@@ -62,6 +62,7 @@ var engineTestCommand = &cli.Command{
 		RunFlag,
 		FuzzFlag,
 		WorkersFlag,
+		SequentialFlag,
 	}, traceFlags),
 }
 
@@ -262,6 +263,7 @@ func runEngineFixture(ctx *cli.Context, test *tests.EngineTest, postCheck func(*
 	config.TrieDirtyCache = 16
 	config.SnapshotCache = 0
 	config.LogNoHistory = true
+	config.DisableParallelExecution = ctx.Bool(SequentialFlag.Name)
 	if tracerFromFlags(ctx) != nil {
 		config.VMTrace = engineTestTracer
 	}

@@ -66,6 +66,10 @@ var (
 		Aliases: []string{"xc"},
 		Usage:   "Cross-check stateful execution against stateless, verifying the witness generation.",
 	}
+	SequentialFlag = &cli.BoolFlag{
+		Name:  "bal.sequential",
+		Usage: "Execute every block sequentially, even one the EIP-7928 parallel processor could run. The delivered block access list is still validated.",
+	}
 
 	// Debugging flags.
 	DumpFlag = &cli.BoolFlag{
