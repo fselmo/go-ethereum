@@ -737,6 +737,57 @@ func TestBlockAccessListExecution(t *testing.T) {
 	}
 }
 
+// TestBlockAccessListRejected checks that blocktest attaches the access list of a
+// block the fixture expects to be rejected, found only in rlp_decoded, so a list
+// that differs from the one the header commits to is refused in both modes.
+func TestBlockAccessListRejected(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("./testdata/blocktest_bal.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures map[string]map[string]any
+	if err := json.Unmarshal(src, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	// Turn the fixture's only block into one expected to be rejected, delivered
+	// with one account missing from its access list, and expect the chain to
+	// stay at genesis.
+	for _, test := range fixtures {
+		block := test["blocks"].([]any)[0].(map[string]any)
+		list := block["blockAccessList"].([]any)
+		test["blocks"] = []any{map[string]any{
+			"rlp":             block["rlp"],
+			"expectException": "BlockException.INVALID_BLOCK_ACCESS_LIST",
+			"rlp_decoded":     map[string]any{"blockAccessList": list[:len(list)-1]},
+		}}
+		test["lastblockhash"] = test["genesisBlockHeader"].(map[string]any)["hash"]
+		test["postState"] = test["pre"]
+	}
+	out, err := json.Marshal(fixtures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "blocktest_bal_rejected.json")
+	if err := os.WriteFile(path, out, 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"blocktest", path}, {"blocktest", "--bal.sequential", path}} {
+		tt := cmdtest.NewTestCmd(t, nil)
+		tt.Run("evm-test", args...)
+		stdout := tt.Output()
+		tt.WaitExit()
+
+		var results []testResult
+		if err := json.Unmarshal(stdout, &results); err != nil {
+			t.Fatalf("%v: stdout is not a JSON result list: %v\n%s", args, err, stdout)
+		}
+		if len(results) != 1 || !results[0].Pass || !strings.Contains(results[0].Error, "access list hash mismatch") {
+			t.Fatalf("%v: block with a tampered access list not rejected: %s", args, stdout)
+		}
+	}
+}
+
 func TestEvmRunRegEx(t *testing.T) {
 	t.Parallel()
 	tt := cmdtest.NewTestCmd(t, nil)
