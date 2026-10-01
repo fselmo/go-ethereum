@@ -24,7 +24,6 @@ import (
 	"os"
 	"regexp"
 	"slices"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -57,12 +56,7 @@ func blockTestCmd(ctx *cli.Context) error {
 
 	// If path is provided, run the tests at that path.
 	if len(path) != 0 {
-		collected := collectFiles(path)
-		workers := ctx.Int(WorkersFlag.Name)
-		if workers <= 0 {
-			workers = 1
-		}
-		results, err := runBlockTestsParallel(ctx, collected, workers)
+		results, err := runFiles(ctx, collectFiles(path), runBlockTest)
 		if err != nil {
 			return err
 		}
@@ -86,63 +80,6 @@ func blockTestCmd(ctx *cli.Context) error {
 		}
 	}
 	return nil
-}
-
-func runBlockTestsParallel(ctx *cli.Context, files []string, workers int) ([]testResult, error) {
-	if workers == 1 {
-		var results []testResult
-		for _, fname := range files {
-			r, err := runBlockTest(ctx, fname)
-			if err != nil {
-				return nil, err
-			}
-			results = append(results, r...)
-		}
-		return results, nil
-	}
-	var (
-		wg     sync.WaitGroup
-		fileCh = make(chan struct {
-			index int
-			fname string
-		}, len(files))
-		resultCh = make(chan fileResult, len(files))
-	)
-	for i, fname := range files {
-		fileCh <- struct {
-			index int
-			fname string
-		}{i, fname}
-	}
-	close(fileCh)
-
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for item := range fileCh {
-				r, err := runBlockTest(ctx, item.fname)
-				resultCh <- fileResult{index: item.index, results: r, err: err}
-			}
-		}()
-	}
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	ordered := make([]fileResult, len(files))
-	for fr := range resultCh {
-		if fr.err != nil {
-			return nil, fr.err
-		}
-		ordered[fr.index] = fr
-	}
-	var results []testResult
-	for _, fr := range ordered {
-		results = append(results, fr.results...)
-	}
-	return results, nil
 }
 
 func runBlockTest(ctx *cli.Context, fname string) ([]testResult, error) {

@@ -23,9 +23,7 @@ import (
 	"maps"
 	"os"
 	"regexp"
-	"runtime"
 	"slices"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -37,14 +35,6 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/tests"
 	"github.com/urfave/cli/v2"
-)
-
-var (
-	WorkersFlag = &cli.IntFlag{
-		Name:  "workers",
-		Usage: "Number of parallel workers for processing fixture files",
-		Value: 1,
-	}
 )
 
 var engineTestCommand = &cli.Command{
@@ -69,12 +59,7 @@ func engineTestCmd(ctx *cli.Context) error {
 
 	// If path is provided, run the tests at that path.
 	if len(path) != 0 {
-		collected := collectFiles(path)
-		workers := ctx.Int(WorkersFlag.Name)
-		if workers <= 0 {
-			workers = runtime.NumCPU()
-		}
-		results, err := runEngineTestsParallel(ctx, collected, workers)
+		results, err := runFiles(ctx, collectFiles(path), runEngineTest)
 		if err != nil {
 			return err
 		}
@@ -97,77 +82,6 @@ func engineTestCmd(ctx *cli.Context) error {
 		}
 	}
 	return nil
-}
-
-// fileResult holds the results from processing a single fixture file.
-type fileResult struct {
-	index   int
-	results []testResult
-	err     error
-}
-
-// runEngineTestsParallel processes fixture files using a worker pool.
-func runEngineTestsParallel(ctx *cli.Context, files []string, workers int) ([]testResult, error) {
-	if workers == 1 {
-		// Fast path: no goroutine overhead for single worker
-		var results []testResult
-		for _, fname := range files {
-			r, err := runEngineTest(ctx, fname)
-			if err != nil {
-				return nil, err
-			}
-			results = append(results, r...)
-		}
-		return results, nil
-	}
-	// Parallel execution
-	var (
-		wg     sync.WaitGroup
-		fileCh = make(chan struct {
-			index int
-			fname string
-		}, len(files))
-		resultCh = make(chan fileResult, len(files))
-	)
-	// Feed files into the channel
-	for i, fname := range files {
-		fileCh <- struct {
-			index int
-			fname string
-		}{i, fname}
-	}
-	close(fileCh)
-
-	// Start workers
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for item := range fileCh {
-				r, err := runEngineTest(ctx, item.fname)
-				resultCh <- fileResult{index: item.index, results: r, err: err}
-			}
-		}()
-	}
-	// Close result channel when all workers are done
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	// Collect results in order
-	ordered := make([]fileResult, len(files))
-	for fr := range resultCh {
-		if fr.err != nil {
-			return nil, fr.err
-		}
-		ordered[fr.index] = fr
-	}
-	var results []testResult
-	for _, fr := range ordered {
-		results = append(results, fr.results...)
-	}
-	return results, nil
 }
 
 func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
