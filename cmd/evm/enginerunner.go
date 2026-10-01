@@ -30,7 +30,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/eth"
+	"github.com/ethereum/go-ethereum/eth/catalyst"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/tests"
 	"github.com/urfave/cli/v2"
 )
@@ -193,16 +197,14 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		test := testsByName[name]
 		result := &testResult{Name: name, Pass: true}
 		var finalHash *common.Hash
-		if err := test.Run(rawdb.PathScheme, tracer, func(res error, chain *core.BlockChain) {
+		if err := test.Run(rawdb.PathScheme, tracer, attachEngineAPI, func(res error, chain *core.BlockChain) {
 			if ctx.Bool(DumpFlag.Name) {
 				if s, _ := chain.State(); s != nil {
 					result.State = dump(s)
 				}
 			}
-			if chain != nil {
-				hash := chain.CurrentBlock().Hash()
-				finalHash = &hash
-			}
+			hash := chain.CurrentBlock().Hash()
+			finalHash = &hash
 		}); err != nil {
 			result.Pass, result.Error = false, err.Error()
 		}
@@ -222,4 +224,24 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		results = append(results, *result)
 	}
 	return results, nil
+}
+
+// attachEngineAPI puts geth's engine API, eth/catalyst.ConsensusAPI, on a
+// test's chain and returns an in-process RPC client for it. The API is backed
+// by the chain alone (see eth.NewEngineBackend): no node, networking, RPC
+// transport or other services are started.
+func attachEngineAPI(chain *core.BlockChain, db ethdb.Database) (*rpc.Client, func(), error) {
+	backend := eth.NewEngineBackend(chain, db)
+	server := rpc.NewServer()
+	if err := server.RegisterName("engine", catalyst.NewConsensusAPIWithoutHeartbeat(backend)); err != nil {
+		backend.Downloader().Terminate()
+		return nil, nil, err
+	}
+	client := rpc.DialInProc(server)
+	release := func() {
+		client.Close()
+		server.Stop()
+		backend.Downloader().Terminate()
+	}
+	return client, release, nil
 }
