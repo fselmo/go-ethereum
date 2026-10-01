@@ -691,6 +691,52 @@ func TestEvmRun(t *testing.T) {
 	}
 }
 
+// TestBlockAccessListExecution checks that blocktest and enginetest run a block
+// carrying an EIP-7928 access list on the parallel processor, or on the
+// sequential one under --bal.sequential, and report the choice on stderr.
+func TestBlockAccessListExecution(t *testing.T) {
+	t.Parallel()
+	for i, tc := range []struct {
+		input      []string
+		wantPath   string
+		wantReason string
+	}{
+		{[]string{"blocktest", "./testdata/blocktest_bal.json"}, "parallel", ""},
+		{[]string{"blocktest", "--bal.sequential", "./testdata/blocktest_bal.json"}, "sequential", "disabled"},
+		{[]string{"enginetest", "./testdata/enginetest_bal.json"}, "parallel", ""},
+		{[]string{"enginetest", "--bal.sequential", "./testdata/enginetest_bal.json"}, "sequential", "disabled"},
+	} {
+		tt := cmdtest.NewTestCmd(t, nil)
+		tt.Run("evm-test", tc.input...)
+		stdout := tt.Output()
+		tt.WaitExit()
+		stderr := tt.StderrText()
+
+		var results []testResult
+		if err := json.Unmarshal(stdout, &results); err != nil {
+			t.Fatalf("test %d: stdout is not a JSON result list: %v\n%s", i, err, stdout)
+		}
+		if len(results) != 1 || !results[0].Pass || results[0].BlockHash == nil {
+			t.Fatalf("test %d: unexpected results: %s", i, stdout)
+		}
+		var events []executionEvent
+		for _, line := range strings.Split(stderr, "\n") {
+			if !strings.HasPrefix(line, `{"event":`) {
+				continue
+			}
+			var event executionEvent
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				t.Fatalf("test %d: bad event line %q: %v", i, line, err)
+			}
+			events = append(events, event)
+		}
+		want := executionEvent{Event: "balExecution", Block: 1, Hash: *results[0].BlockHash, Path: tc.wantPath, Reason: tc.wantReason}
+		if len(events) != 1 || events[0] != want {
+			t.Fatalf("test %d: events %+v, want [%+v]", i, events, want)
+		}
+	}
+}
+
 func TestEvmRunRegEx(t *testing.T) {
 	t.Parallel()
 	tt := cmdtest.NewTestCmd(t, nil)
