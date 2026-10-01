@@ -30,7 +30,15 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/eth"
+	"github.com/ethereum/go-ethereum/eth/catalyst"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/tests"
 	"github.com/urfave/cli/v2"
 )
@@ -57,8 +65,18 @@ var engineTestCommand = &cli.Command{
 	}, traceFlags),
 }
 
+// engineTestTracer is the live tracer name under which enginetest hands the
+// tracer configured by the trace flags to the node it runs each test on.
+const engineTestTracer = "evm-enginetest"
+
 func engineTestCmd(ctx *cli.Context) error {
 	path := ctx.Args().First()
+
+	if tracerFromFlags(ctx) != nil {
+		tracers.LiveDirectory.Register(engineTestTracer, func(json.RawMessage) (*tracing.Hooks, error) {
+			return tracerFromFlags(ctx), nil
+		})
+	}
 
 	// If path is provided, run the tests at that path.
 	if len(path) != 0 {
@@ -177,8 +195,6 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid regex -%s: %v", RunFlag.Name, err)
 	}
-	tracer := tracerFromFlags(ctx)
-
 	if ctx.IsSet(FuzzFlag.Name) {
 		log.SetDefault(log.NewLogger(log.DiscardHandler()))
 	}
@@ -193,16 +209,14 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		test := testsByName[name]
 		result := &testResult{Name: name, Pass: true}
 		var finalHash *common.Hash
-		if err := test.Run(rawdb.PathScheme, tracer, func(res error, chain *core.BlockChain) {
+		if err := runEngineFixture(ctx, test, func(chain *core.BlockChain) {
 			if ctx.Bool(DumpFlag.Name) {
 				if s, _ := chain.State(); s != nil {
 					result.State = dump(s)
 				}
 			}
-			if chain != nil {
-				hash := chain.CurrentBlock().Hash()
-				finalHash = &hash
-			}
+			hash := chain.CurrentBlock().Hash()
+			finalHash = &hash
 		}); err != nil {
 			result.Pass, result.Error = false, err.Error()
 		}
@@ -222,4 +236,50 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		results = append(results, *result)
 	}
 	return results, nil
+}
+
+// runEngineFixture starts an in-memory node from the test's genesis, runs the
+// test through the node's own Engine API (eth/catalyst.ConsensusAPI, served
+// in-process over RPC) and hands the node's chain to postCheck.
+func runEngineFixture(ctx *cli.Context, test *tests.EngineTest, postCheck func(*core.BlockChain)) error {
+	genesis, err := test.Genesis()
+	if err != nil {
+		return err
+	}
+	stack, err := node.New(&node.Config{P2P: p2p.Config{NoDiscovery: true}})
+	if err != nil {
+		return err
+	}
+	defer stack.Close()
+
+	config := ethconfig.Defaults
+	config.Genesis = genesis
+	config.NetworkId = genesis.Config.ChainID.Uint64()
+	config.SyncMode = ethconfig.FullSync
+	config.StateScheme = rawdb.PathScheme
+	config.Preimages = true
+	config.TrieCleanCache = 16
+	config.TrieDirtyCache = 16
+	config.SnapshotCache = 0
+	config.LogNoHistory = true
+	if tracerFromFlags(ctx) != nil {
+		config.VMTrace = engineTestTracer
+	}
+	backend, err := eth.New(stack, &config)
+	if err != nil {
+		return err
+	}
+	stack.RegisterAPIs([]rpc.API{{
+		Namespace: "engine",
+		Service:   catalyst.NewConsensusAPIWithoutHeartbeat(backend),
+	}})
+	if err := stack.Start(); err != nil {
+		return err
+	}
+	client := stack.Attach()
+	defer client.Close()
+
+	err = test.Run(client, backend.BlockChain())
+	postCheck(backend.BlockChain())
+	return err
 }
