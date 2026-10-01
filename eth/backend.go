@@ -251,7 +251,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			HistoryPolicy:           histPolicy,
 			TxLookupLimit:           int64(min(config.TransactionHistory, math.MaxInt64)),
 			VmConfig: vm.Config{
-				EnablePreimageRecording: config.EnablePreimageRecording,
+				EnablePreimageRecording:  config.EnablePreimageRecording,
+				DisableParallelExecution: config.DisableParallelExecution,
 			},
 			// Enables file journaling for the trie database. The journal files will be stored
 			// within the data directory. The corresponding paths will be either:

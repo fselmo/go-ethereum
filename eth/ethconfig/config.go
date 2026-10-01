@@ -177,6 +177,10 @@ type Config struct {
 	// Enables tracking of SHA3 preimages in the VM
 	EnablePreimageRecording bool
 
+	// Executes every block sequentially, even one the EIP-7928 parallel
+	// processor could run (testing purpose)
+	DisableParallelExecution bool `toml:",omitempty"`
+
 	// Enables collection of witness trie access statistics
 	EnableWitnessStats bool
 
