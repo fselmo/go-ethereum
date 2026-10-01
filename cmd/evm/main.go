@@ -80,9 +80,9 @@ var (
 		Name:  "human",
 		Usage: "\"Human-readable\" output",
 	}
-	NDJSONFlag = &cli.BoolFlag{
-		Name:  "ndjson",
-		Usage: "Output one JSON result per line as tests complete (streaming)",
+	JSONLFlag = &cli.BoolFlag{
+		Name:  "jsonl",
+		Usage: "Output one JSON result per line instead of a JSON array",
 	}
 	StatDumpFlag = &cli.BoolFlag{
 		Name:  "statdump",

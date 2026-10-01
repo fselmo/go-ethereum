@@ -59,6 +59,7 @@ var engineTestCommand = &cli.Command{
 	Flags: slices.Concat([]cli.Flag{
 		DumpFlag,
 		HumanReadableFlag,
+		JSONLFlag,
 		RunFlag,
 		FuzzFlag,
 		WorkersFlag,
