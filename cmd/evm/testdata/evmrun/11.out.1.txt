@@ -1,0 +1,16 @@
+[
+  {
+    "name": "00000006-naivefuzz-0",
+    "pass": true,
+    "stateRoot": "0x9a343c51fb379b7dce12049dea4f32369d78f6513d8dccf68dec0c235a5bb62c",
+    "fork": "London",
+    "error": "intrinsic gas too low: have 1, want 22520"
+  },
+  {
+    "name": "00000006-naivefuzz-0",
+    "pass": true,
+    "stateRoot": "0xad1024c87b5548e77c937aa50f72b6cb620d278f4dd79bae7f78f71ff75af458",
+    "fork": "London",
+    "error": ""
+  }
+]

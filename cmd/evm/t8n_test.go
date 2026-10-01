@@ -658,6 +658,10 @@ func TestEvmRun(t *testing.T) {
 			wantStdout: "./testdata/evmrun/8.out.1.txt",
 			wantStderr: "./testdata/evmrun/8.out.2.txt",
 		},
+		{ // statetest subcommand, a subtest's expected error is not reported for the next one
+			input:      []string{"statetest", "./testdata/statetest_exception.json"},
+			wantStdout: "./testdata/evmrun/11.out.1.txt",
+		},
 	} {
 		tt.Logf("args: go run ./cmd/evm %v\n", strings.Join(tc.input, " "))
 		tt.Run("evm-test", tc.input...)

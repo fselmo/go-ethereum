@@ -203,6 +203,7 @@ func (t *StateTest) Subtests() []StateSubtest {
 // or a new error detailing the failing expectation.
 // This function does not return or modify the original error, it only evaluates and returns expectations for the error.
 func (t *StateTest) checkError(subtest StateSubtest, err error) error {
+	t.LastTxError = ""
 	expectedError := t.json.Post[subtest.Fork][subtest.Index].ExpectException
 	if err == nil && expectedError == "" {
 		return nil
