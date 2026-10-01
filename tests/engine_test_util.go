@@ -163,9 +163,9 @@ func (t *EngineTest) Run(scheme string, tracer *tracing.Hooks, postCheck func(er
 	db := rawdb.NewMemoryDatabase()
 	tconf := &triedb.Config{
 		Preimages: true,
-		IsVerkle:  gspec.Config.VerkleTime != nil && *gspec.Config.VerkleTime <= gspec.Timestamp,
+		IsUBT:     gspec.Config.UBTTime != nil && *gspec.Config.UBTTime <= gspec.Timestamp,
 	}
-	if scheme == rawdb.PathScheme || tconf.IsVerkle {
+	if scheme == rawdb.PathScheme || tconf.IsUBT {
 		tconf.PathDB = pathdb.Defaults
 	} else {
 		tconf.HashDB = hashdb.Defaults
@@ -307,6 +307,7 @@ func (t *EngineTest) genesis(config *params.ChainConfig) *core.Genesis {
 		BaseFee:       t.json.Genesis.BaseFeePerGas,
 		BlobGasUsed:   t.json.Genesis.BlobGasUsed,
 		ExcessBlobGas: t.json.Genesis.ExcessBlobGas,
+		SlotNumber:    t.json.Genesis.SlotNumber,
 	}
 }
 
