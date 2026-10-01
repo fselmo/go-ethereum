@@ -72,6 +72,7 @@ const engineTestTracer = "evm-enginetest"
 
 func engineTestCmd(ctx *cli.Context) error {
 	path := ctx.Args().First()
+	reportExecution(log.Root().Handler())
 
 	if tracerFromFlags(ctx) != nil {
 		tracers.LiveDirectory.Register(engineTestTracer, func(json.RawMessage) (*tracing.Hooks, error) {
@@ -197,7 +198,7 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		return nil, fmt.Errorf("invalid regex -%s: %v", RunFlag.Name, err)
 	}
 	if ctx.IsSet(FuzzFlag.Name) {
-		log.SetDefault(log.NewLogger(log.DiscardHandler()))
+		reportExecution(log.DiscardHandler())
 	}
 
 	keys := slices.Sorted(maps.Keys(testsByName))

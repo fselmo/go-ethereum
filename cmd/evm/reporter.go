@@ -17,11 +17,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/urfave/cli/v2"
 )
 
@@ -92,4 +98,73 @@ func report(ctx *cli.Context, results []testResult) {
 func reportNDJSON(r testResult) {
 	out, _ := json.Marshal(r)
 	fmt.Println(string(out))
+}
+
+// executionEvent reports which processor executed a block: the EIP-7928
+// parallel one or the sequential one, and for the latter the first condition
+// that ruled parallel out.
+type executionEvent struct {
+	Event  string      `json:"event"`
+	Block  uint64      `json:"block"`
+	Hash   common.Hash `json:"hash"`
+	Path   string      `json:"path"`
+	Reason string      `json:"reason"`
+}
+
+// executionReporter is a log handler that turns core's per-block "Executing
+// block" debug record into a single-line JSON executionEvent on its writer, and
+// passes every other record on to the wrapped handler.
+type executionReporter struct {
+	inner slog.Handler
+	out   io.Writer
+	lock  *sync.Mutex
+}
+
+// reportExecution installs an executionReporter in front of the given log
+// handler, writing the events to stderr.
+func reportExecution(inner slog.Handler) {
+	log.SetDefault(log.NewLogger(&executionReporter{inner: inner, out: os.Stderr, lock: new(sync.Mutex)}))
+}
+
+func (h *executionReporter) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= log.LevelDebug || h.inner.Enabled(ctx, level)
+}
+
+func (h *executionReporter) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message != "Executing block" {
+		if !h.inner.Enabled(ctx, r.Level) {
+			return nil
+		}
+		return h.inner.Handle(ctx, r)
+	}
+	event := executionEvent{Event: "balExecution"}
+	r.Attrs(func(a slog.Attr) bool {
+		switch a.Key {
+		case "number":
+			event.Block, _ = a.Value.Any().(uint64)
+		case "hash":
+			event.Hash, _ = a.Value.Any().(common.Hash)
+		case "path":
+			event.Path = a.Value.String()
+		case "reason":
+			event.Reason = a.Value.String()
+		}
+		return true
+	})
+	out, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	h.lock.Lock()
+	defer h.lock.Unlock()
+	_, err = fmt.Fprintln(h.out, string(out))
+	return err
+}
+
+func (h *executionReporter) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &executionReporter{inner: h.inner.WithAttrs(attrs), out: h.out, lock: h.lock}
+}
+
+func (h *executionReporter) WithGroup(name string) slog.Handler {
+	return &executionReporter{inner: h.inner.WithGroup(name), out: h.out, lock: h.lock}
 }
