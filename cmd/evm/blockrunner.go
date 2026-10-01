@@ -45,6 +45,7 @@ var blockTestCommand = &cli.Command{
 		RunFlag,
 		WitnessCrossCheckFlag,
 		SequentialFlag,
+		BALReportFlag,
 		FuzzFlag,
 		WorkersFlag,
 	}, traceFlags),
@@ -52,7 +53,9 @@ var blockTestCommand = &cli.Command{
 
 func blockTestCmd(ctx *cli.Context) error {
 	path := ctx.Args().First()
-	reportExecution(log.Root().Handler())
+	if ctx.Bool(BALReportFlag.Name) {
+		reportExecution(log.Root().Handler())
+	}
 
 	// If path is provided, run the tests at that path.
 	if len(path) != 0 {
@@ -99,7 +102,7 @@ func runBlockTest(ctx *cli.Context, fname string) ([]testResult, error) {
 
 	// Suppress INFO logs during fuzzing
 	if ctx.Bool(FuzzFlag.Name) {
-		reportExecution(log.DiscardHandler())
+		discardLogs(ctx)
 	}
 
 	// Pull out keys to sort and ensure tests are run in order.

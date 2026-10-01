@@ -693,18 +693,21 @@ func TestEvmRun(t *testing.T) {
 
 // TestBlockAccessListExecution checks that blocktest and enginetest run a block
 // carrying an EIP-7928 access list on the parallel processor, or on the
-// sequential one under --bal.sequential, and report the choice on stderr.
+// sequential one under --bal.sequential, and report the choice on stderr only
+// under --bal-report.
 func TestBlockAccessListExecution(t *testing.T) {
 	t.Parallel()
 	for i, tc := range []struct {
 		input      []string
-		wantPath   string
+		wantPath   string // empty when no event line is expected
 		wantReason string
 	}{
-		{[]string{"blocktest", "./testdata/blocktest_bal.json"}, "parallel", ""},
-		{[]string{"blocktest", "--bal.sequential", "./testdata/blocktest_bal.json"}, "sequential", "disabled"},
-		{[]string{"enginetest", "./testdata/enginetest_bal.json"}, "parallel", ""},
-		{[]string{"enginetest", "--bal.sequential", "./testdata/enginetest_bal.json"}, "sequential", "disabled"},
+		{[]string{"blocktest", "--bal-report", "./testdata/blocktest_bal.json"}, "parallel", ""},
+		{[]string{"blocktest", "--bal-report", "--bal.sequential", "./testdata/blocktest_bal.json"}, "sequential", "disabled"},
+		{[]string{"blocktest", "./testdata/blocktest_bal.json"}, "", ""},
+		{[]string{"enginetest", "--bal-report", "./testdata/enginetest_bal.json"}, "parallel", ""},
+		{[]string{"enginetest", "--bal-report", "--bal.sequential", "./testdata/enginetest_bal.json"}, "sequential", "disabled"},
+		{[]string{"enginetest", "./testdata/enginetest_bal.json"}, "", ""},
 	} {
 		tt := cmdtest.NewTestCmd(t, nil)
 		tt.Run("evm-test", tc.input...)
@@ -721,7 +724,7 @@ func TestBlockAccessListExecution(t *testing.T) {
 		}
 		var events []executionEvent
 		for _, line := range strings.Split(stderr, "\n") {
-			if !strings.HasPrefix(line, `{"event":`) {
+			if !strings.Contains(line, `"event"`) {
 				continue
 			}
 			var event executionEvent
@@ -729,6 +732,12 @@ func TestBlockAccessListExecution(t *testing.T) {
 				t.Fatalf("test %d: bad event line %q: %v", i, line, err)
 			}
 			events = append(events, event)
+		}
+		if tc.wantPath == "" {
+			if len(events) != 0 {
+				t.Fatalf("test %d: events %+v without --bal-report, want none", i, events)
+			}
+			continue
 		}
 		want := executionEvent{Event: "balExecution", Block: 1, Hash: *results[0].BlockHash, Path: tc.wantPath, Reason: tc.wantReason}
 		if len(events) != 1 || events[0] != want {

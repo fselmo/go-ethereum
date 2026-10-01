@@ -50,12 +50,15 @@ var engineTestCommand = &cli.Command{
 		FuzzFlag,
 		WorkersFlag,
 		SequentialFlag,
+		BALReportFlag,
 	}, traceFlags),
 }
 
 func engineTestCmd(ctx *cli.Context) error {
 	path := ctx.Args().First()
-	reportExecution(log.Root().Handler())
+	if ctx.Bool(BALReportFlag.Name) {
+		reportExecution(log.Root().Handler())
+	}
 
 	// If path is provided, run the tests at that path.
 	if len(path) != 0 {
@@ -101,7 +104,7 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 	tracer := tracerFromFlags(ctx)
 
 	if ctx.IsSet(FuzzFlag.Name) {
-		reportExecution(log.DiscardHandler())
+		discardLogs(ctx)
 	}
 
 	keys := slices.Sorted(maps.Keys(testsByName))

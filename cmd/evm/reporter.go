@@ -114,7 +114,8 @@ type executionEvent struct {
 
 // executionReporter is a log handler that turns core's per-block "Executing
 // block" debug record into a single-line JSON executionEvent on its writer, and
-// passes every other record on to the wrapped handler.
+// passes every other record on to the wrapped handler. The runners install it
+// only under --bal-report.
 type executionReporter struct {
 	inner slog.Handler
 	out   io.Writer
@@ -125,6 +126,16 @@ type executionReporter struct {
 // handler, writing the events to stderr.
 func reportExecution(inner slog.Handler) {
 	log.SetDefault(log.NewLogger(&executionReporter{inner: inner, out: os.Stderr, lock: new(sync.Mutex)}))
+}
+
+// discardLogs silences logging for --fuzz, keeping the execution events when
+// --bal-report is set.
+func discardLogs(ctx *cli.Context) {
+	if ctx.Bool(BALReportFlag.Name) {
+		reportExecution(log.DiscardHandler())
+		return
+	}
+	log.SetDefault(log.NewLogger(log.DiscardHandler()))
 }
 
 func (h *executionReporter) Enabled(ctx context.Context, level slog.Level) bool {
