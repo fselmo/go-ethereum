@@ -999,7 +999,8 @@ func TestRunnersReportRejections(t *testing.T) {
 				first := payloads[0].(map[string]any)
 				first["validationError"] = unrelated
 				// The same payload through engine_newPayloadV4, whose params do
-				// not fit Amsterdam, fails with a JSON-RPC error.
+				// not fit Amsterdam, fails with a JSON-RPC error whose data
+				// names the cause.
 				second := maps.Clone(first)
 				delete(second, "validationError")
 				second["newPayloadVersion"] = "4"
@@ -1008,7 +1009,7 @@ func TestRunnersReportRejections(t *testing.T) {
 			},
 			want: []tests.Rejection{
 				{Index: 0, Error: bad},
-				{Index: 1, Error: "-32602: Invalid parameters"},
+				{Index: 1, Error: `-32602: Invalid parameters: {"err":"slotNumber not supported pre-amsterdam"}`},
 			},
 		},
 	} {
