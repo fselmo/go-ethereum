@@ -27,8 +27,8 @@ import (
 // execution-spec-tests (EEST) fixtures expect. They are a copy of EEST's
 // GethExceptionMapper, the mapping its consume command applies to geth:
 // packages/testing/src/execution_testing/client_clis/clis/geth.py, blob
-// b59953a93e9525c4ea9e1e6baf2d1340ca6331a5 (execution-specs branch
-// fix/bal-pre-fork-header-exception, not yet merged). Keep them in sync with it.
+// 5baff1852411516e6354fc97741043191ae61420 (execution-specs forks/amsterdam
+// a87891f7e69eab1f903233c61c5514d8c94bd5d1). Keep them in sync with it.
 
 type exceptionSubstring struct {
 	name      string
@@ -97,7 +97,7 @@ var exceptionRegexps = []exceptionRegexp{
 	{"BlockException.INVALID_DEPOSIT_EVENT_LAYOUT", regexp.MustCompile(`invalid requests hash|failed to parse deposit logs`)},
 	{"BlockException.INVALID_BAL_HASH", regexp.MustCompile(`invalid block access list:|access list hash mismatch`)},
 	{"BlockException.INVALID_BLOCK_ACCESS_LIST", regexp.MustCompile(`difference between computed state diff and BAL entry for account|invalid block access list:|computed state diff contained mutated accounts which weren't reported in BAL|BAL change not reported in computed|additional mutations compared to BAL|access list hash mismatch|failed to decode BAL|[bB][aA][lL] validation fail`)},
-	{"BlockException.INCORRECT_BLOCK_FORMAT", regexp.MustCompile(`invalid block access list:|invalid block access list hash: have [0-9a-f]+, expected nil|invalid (excessBlobGas|blobGasUsed): have \d+, expected nil`)},
+	{"BlockException.INCORRECT_BLOCK_FORMAT", regexp.MustCompile(`invalid block access list:`)},
 	{"BlockException.BLOCK_ACCESS_LIST_GAS_LIMIT_EXCEEDED", regexp.MustCompile(`block access list exceeds gas limit|block access list exceeds size constraint`)},
 	{"BlockException.GAS_USED_OVERFLOW", regexp.MustCompile(`gas limit reached`)},
 	{"TransactionException.INTRINSIC_GAS_TOO_LOW", regexp.MustCompile(`insufficient gas for floor data gas cost`)},
