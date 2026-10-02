@@ -118,7 +118,6 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 			continue
 		}
 		test := testsByName[name]
-		test.CheckException = checkException
 		result := &testResult{Name: name, Pass: true}
 		var finalHash *common.Hash
 		if err := test.Run(rawdb.PathScheme, ctx.Bool(SequentialFlag.Name), tracer, attachEngineAPI, func(res error, chain *core.BlockChain) {

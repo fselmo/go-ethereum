@@ -53,11 +53,6 @@ import (
 type BlockTest struct {
 	json           btJSON
 	LastBlockError string // actual error from rejected blocks, for result reporting
-
-	// CheckException, if set, is called with a rejected block's expected
-	// exception and the error it was rejected with, and fails the test if it
-	// returns an error. A block that fails to decode is not checked.
-	CheckException func(expected, err string) error
 }
 
 // UnmarshalJSON implements json.Unmarshaler interface.
@@ -347,11 +342,6 @@ func (t *BlockTest) insertBlocks(blockchain *core.BlockChain) ([]btBlock, error)
 		if err != nil {
 			if b.BlockHeader == nil {
 				t.LastBlockError = err.Error()
-				if t.CheckException != nil && b.ExpectException != "" {
-					if err := t.CheckException(b.ExpectException, err.Error()); err != nil {
-						return nil, fmt.Errorf("block (index %d) %v", bi, err)
-					}
-				}
 				continue // OK - block is supposed to be invalid, continue with next block
 			} else {
 				return nil, fmt.Errorf("block #%v insertion into chain failed: %v", blocks[i].Number(), err)

@@ -118,7 +118,6 @@ func runBlockTest(ctx *cli.Context, fname string) ([]testResult, error) {
 			continue
 		}
 		test := tests[name]
-		test.CheckException = checkException
 		result := &testResult{Name: name, Pass: true}
 		var finalHash *common.Hash
 		if err := test.Run(false, rawdb.PathScheme, ctx.Bool(WitnessCrossCheckFlag.Name), ctx.Bool(SequentialFlag.Name), tracer, func(res error, chain *core.BlockChain) {

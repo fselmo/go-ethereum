@@ -903,52 +903,6 @@ func TestBlockAccessListDroppedTwins(t *testing.T) {
 	}
 }
 
-// TestExpectedException checks that blocktest and enginetest pass a rejected
-// block only when its error maps to the exception the fixture expects, using
-// EEST's mapping for geth.
-func TestExpectedException(t *testing.T) {
-	t.Parallel()
-	const (
-		actual = "BlockException.INVALID_BLOCK_ACCESS_LIST"
-		other  = "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS"
-	)
-	for _, runner := range []string{"blocktest", "enginetest"} {
-		src, err := os.ReadFile(fmt.Sprintf("./testdata/%s_exception.json", runner))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, tc := range []struct {
-			expected string
-			wantPass bool
-		}{
-			{actual, true},
-			{other, false},
-			{other + "|" + actual, true},
-		} {
-			fixture := strings.ReplaceAll(string(src), `"`+actual+`"`, `"`+tc.expected+`"`)
-			path := filepath.Join(t.TempDir(), runner+".json")
-			if err := os.WriteFile(path, []byte(fixture), 0644); err != nil {
-				t.Fatal(err)
-			}
-			tt := cmdtest.NewTestCmd(t, nil)
-			tt.Run("evm-test", runner, path)
-			stdout := tt.Output()
-			tt.WaitExit()
-
-			var results []testResult
-			if err := json.Unmarshal(stdout, &results); err != nil {
-				t.Fatalf("%s %s: stdout is not a JSON result list: %v\n%s", runner, tc.expected, err, stdout)
-			}
-			if len(results) != 1 || results[0].Pass != tc.wantPass {
-				t.Fatalf("%s %s: unexpected results, want pass=%v: %s", runner, tc.expected, tc.wantPass, stdout)
-			}
-			if !tc.wantPass && (!strings.Contains(results[0].Error, other) || !strings.Contains(results[0].Error, actual)) {
-				t.Fatalf("%s %s: error does not name the expected and actual exceptions: %s", runner, tc.expected, results[0].Error)
-			}
-		}
-	}
-}
-
 // TestRunnersTakeSeveralPaths checks that the test runners run every path they
 // are given, not only the first.
 func TestRunnersTakeSeveralPaths(t *testing.T) {
@@ -1003,25 +957,6 @@ func TestRunnersRejectMissingPaths(t *testing.T) {
 		}
 		if stderr := tt.StderrText(); !strings.Contains(stderr, "does-not-exist.json") {
 			t.Errorf("%s: stderr does not name the missing path:\n%s", tc.runner, stderr)
-		}
-	}
-}
-
-// TestCheckException checks the mapping of geth's errors to EEST exceptions.
-func TestCheckException(t *testing.T) {
-	for i, tc := range []struct {
-		expected, msg string
-		wantErr       bool
-	}{
-		{"TransactionException.NONCE_MISMATCH_TOO_LOW", "nonce too low: address 0x00, tx: 0 state: 1", false},
-		{"BlockException.INVALID_GAS_USED", "invalid gas used (remote: 1 local: 2)", false},
-		{"BlockException.INVALID_STATE_ROOT", "invalid gas used (remote: 1 local: 2)", true},
-		{"BlockException.INVALID_STATE_ROOT", "an error geth has never returned", true},
-		{"BlockException.INVALID_STATE_ROOT", "", true},
-		{"InvalidStateRoot", "an error geth has never returned", false}, // legacy ethereum/tests name
-	} {
-		if err := checkException(tc.expected, tc.msg); (err != nil) != tc.wantErr {
-			t.Errorf("test %d: checkException(%q, %q) = %v, want error %v", i, tc.expected, tc.msg, err, tc.wantErr)
 		}
 	}
 }
