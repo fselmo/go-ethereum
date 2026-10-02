@@ -489,11 +489,18 @@ func (bb *btBlock) decode() (*types.Block, error) {
 	if err = rlp.DecodeBytes(data, &b); err != nil {
 		return nil, err
 	}
+	// The access list is delivered beside the block, as it is from a peer in
+	// sync, so it is used only if it is the one the header commits to.
+	// Otherwise it is dropped, like the downloader drops a peer's list, and
+	// the block is judged on its header with the list computed in execution.
 	list, err := bb.accessList()
-	if err != nil {
-		return nil, fmt.Errorf("block access list: %v", err)
-	}
-	if list != nil {
+	switch {
+	case err != nil:
+		log.Debug("Dropped block access list", "number", b.NumberU64(), "hash", b.Hash(), "err", err)
+	case list == nil:
+	case b.Header().BlockAccessListHash == nil || list.Hash() != *b.Header().BlockAccessListHash:
+		log.Debug("Dropped block access list", "number", b.NumberU64(), "hash", b.Hash(), "err", "hash mismatch")
+	default:
 		return b.WithAccessListUnsafe(list), nil
 	}
 	return &b, nil

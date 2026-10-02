@@ -746,53 +746,78 @@ func TestBlockAccessListExecution(t *testing.T) {
 	}
 }
 
-// TestBlockAccessListRejected checks that blocktest attaches the access list of a
-// block the fixture expects to be rejected, found only in rlp_decoded, so a list
-// that differs from the one the header commits to is refused in both modes.
-func TestBlockAccessListRejected(t *testing.T) {
+// TestBlockAccessListDropped checks that blocktest drops a delivered access
+// list that differs from the one the header commits to, in either fixture
+// field, and imports the block with the list computed in execution, as the
+// downloader does with a peer's list. The report names the dropped list.
+func TestBlockAccessListDropped(t *testing.T) {
 	t.Parallel()
 	src, err := os.ReadFile("./testdata/blocktest_bal.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fixtures map[string]map[string]any
-	if err := json.Unmarshal(src, &fixtures); err != nil {
-		t.Fatal(err)
-	}
-	// Turn the fixture's only block into one expected to be rejected, delivered
-	// with one account missing from its access list, and expect the chain to
-	// stay at genesis.
-	for _, test := range fixtures {
-		block := test["blocks"].([]any)[0].(map[string]any)
-		list := block["blockAccessList"].([]any)
-		test["blocks"] = []any{map[string]any{
-			"rlp":             block["rlp"],
-			"expectException": "BlockException.INVALID_BLOCK_ACCESS_LIST",
-			"rlp_decoded":     map[string]any{"blockAccessList": list[:len(list)-1]},
-		}}
-		test["lastblockhash"] = test["genesisBlockHeader"].(map[string]any)["hash"]
-		test["postState"] = test["pre"]
-	}
-	out, err := json.Marshal(fixtures)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "blocktest_bal_rejected.json")
-	if err := os.WriteFile(path, out, 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"blocktest", path}, {"blocktest", "--bal.sequential", path}} {
-		tt := cmdtest.NewTestCmd(t, nil)
-		tt.Run("evm-test", args...)
-		stdout := tt.Output()
-		tt.WaitExit()
-
-		var results []testResult
-		if err := json.Unmarshal(stdout, &results); err != nil {
-			t.Fatalf("%v: stdout is not a JSON result list: %v\n%s", args, err, stdout)
+	for _, field := range []string{"blockAccessList", "rlp_decoded"} {
+		var fixtures map[string]map[string]any
+		if err := json.Unmarshal(src, &fixtures); err != nil {
+			t.Fatal(err)
 		}
-		if len(results) != 1 || !results[0].Pass || !strings.Contains(results[0].Error, "access list hash mismatch") {
-			t.Fatalf("%v: block with a tampered access list not rejected: %s", args, stdout)
+		// Deliver the fixture's only block with one account missing from its
+		// access list, leaving the block and its expected post state alone.
+		for _, test := range fixtures {
+			block := test["blocks"].([]any)[0].(map[string]any)
+			list := block["blockAccessList"].([]any)
+			tampered := list[:len(list)-1]
+			if field == "rlp_decoded" {
+				delete(block, "blockAccessList")
+				block["rlp_decoded"] = map[string]any{"blockAccessList": tampered}
+			} else {
+				block["blockAccessList"] = tampered
+			}
+		}
+		out, err := json.Marshal(fixtures)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "blocktest_bal_dropped.json")
+		if err := os.WriteFile(path, out, 0644); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			args       []string
+			wantPath   string
+			wantReason string
+		}{
+			{[]string{"blocktest", "--bal-report", path}, "sequential", "bad-access-list"},
+			{[]string{"blocktest", "--bal-report", "--bal.sequential", path}, "sequential", "disabled"},
+		} {
+			tt := cmdtest.NewTestCmd(t, nil)
+			tt.Run("evm-test", tc.args...)
+			stdout := tt.Output()
+			tt.WaitExit()
+			stderr := tt.StderrText()
+
+			var results []testResult
+			if err := json.Unmarshal(stdout, &results); err != nil {
+				t.Fatalf("%s %v: stdout is not a JSON result list: %v\n%s", field, tc.args, err, stdout)
+			}
+			if len(results) != 1 || !results[0].Pass || results[0].BlockHash == nil {
+				t.Fatalf("%s %v: block with a dropped access list not imported: %s", field, tc.args, stdout)
+			}
+			var events []executionEvent
+			for _, line := range strings.Split(stderr, "\n") {
+				if !strings.Contains(line, `"event"`) {
+					continue
+				}
+				var event executionEvent
+				if err := json.Unmarshal([]byte(line), &event); err != nil {
+					t.Fatalf("%s %v: bad event line %q: %v", field, tc.args, line, err)
+				}
+				events = append(events, event)
+			}
+			want := executionEvent{Event: "balExecution", Block: 1, Hash: *results[0].BlockHash, Path: tc.wantPath, Reason: tc.wantReason}
+			if len(events) != 1 || events[0] != want {
+				t.Fatalf("%s %v: events %+v, want [%+v]", field, tc.args, events, want)
+			}
 		}
 	}
 }
