@@ -979,6 +979,34 @@ func TestRunnersTakeSeveralPaths(t *testing.T) {
 	}
 }
 
+// TestRunnersRejectMissingPaths checks that a path that does not exist fails
+// the run before any test runs, instead of being skipped.
+func TestRunnersRejectMissingPaths(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		runner string
+		file   string
+	}{
+		{"blocktest", "./testdata/blocktest_bal.json"},
+		{"enginetest", "./testdata/enginetest_bal.json"},
+		{"statetest", "./testdata/statetest.json"},
+	} {
+		tt := cmdtest.NewTestCmd(t, nil)
+		tt.Run("evm-test", tc.runner, tc.file, "./testdata/does-not-exist.json")
+		stdout := tt.Output()
+		tt.WaitExit()
+		if tt.ExitStatus() == 0 {
+			t.Errorf("%s: exit status 0 with a missing path", tc.runner)
+		}
+		if len(stdout) != 0 {
+			t.Errorf("%s: tests ran despite a missing path:\n%s", tc.runner, stdout)
+		}
+		if stderr := tt.StderrText(); !strings.Contains(stderr, "does-not-exist.json") {
+			t.Errorf("%s: stderr does not name the missing path:\n%s", tc.runner, stderr)
+		}
+	}
+}
+
 // TestCheckException checks the mapping of geth's errors to EEST exceptions.
 func TestCheckException(t *testing.T) {
 	for i, tc := range []struct {

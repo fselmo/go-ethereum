@@ -61,7 +61,11 @@ func engineTestCmd(ctx *cli.Context) error {
 
 	// If paths are provided, run the tests at those paths.
 	if ctx.Args().Present() {
-		results, err := runFiles(ctx, collectFiles(ctx.Args().Slice()...), runEngineTest)
+		files, err := collectFiles(ctx.Args().Slice()...)
+		if err != nil {
+			return err
+		}
+		results, err := runFiles(ctx, files, runEngineTest)
 		if err != nil {
 			return err
 		}

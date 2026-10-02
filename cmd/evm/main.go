@@ -337,8 +337,10 @@ func tracerFromFlags(ctx *cli.Context) *tracing.Hooks {
 }
 
 // collectFiles walks the given paths. A directory contributes all files with
-// json extension below it; a path that points to a file is used as is.
-func collectFiles(paths ...string) []string {
+// json extension below it; a path that points to a file is used as is. A path
+// that does not exist or cannot be read is an error, returned before any test
+// runs.
+func collectFiles(paths ...string) ([]string, error) {
 	var out []string
 	for _, path := range paths {
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
@@ -356,10 +358,17 @@ func collectFiles(paths ...string) []string {
 			return nil
 		})
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			return nil, err
 		}
 	}
-	return out
+	for _, path := range out {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		f.Close()
+	}
+	return out, nil
 }
 
 // runFiles runs the test files with run, on as many files at once as the workers

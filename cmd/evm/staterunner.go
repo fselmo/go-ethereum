@@ -65,7 +65,11 @@ var stateTestCommand = &cli.Command{
 func stateTestCmd(ctx *cli.Context) error {
 	// If paths are provided, run the tests at those paths.
 	if ctx.Args().Present() {
-		results, err := runFiles(ctx, collectFiles(ctx.Args().Slice()...), runStateTest)
+		files, err := collectFiles(ctx.Args().Slice()...)
+		if err != nil {
+			return err
+		}
+		results, err := runFiles(ctx, files, runStateTest)
 		if err != nil {
 			return err
 		}
