@@ -27,6 +27,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -323,7 +324,7 @@ func (t *BlockTest) insertBlocks(blockchain *core.BlockChain) ([]btBlock, error)
 	validBlocks := make([]btBlock, 0)
 	// insert the test blocks, which will execute all transactions
 	for bi, b := range t.json.Blocks {
-		cb, err := b.decode()
+		cb, dropped, err := b.decode()
 		if err != nil {
 			if b.BlockHeader == nil {
 				t.LastBlockError = err.Error()
@@ -335,7 +336,9 @@ func (t *BlockTest) insertBlocks(blockchain *core.BlockChain) ([]btBlock, error)
 		}
 		// RLP decoding worked, try to insert into chain:
 		blocks := types.Blocks{cb}
+		beginImport(cb.Hash(), dropped)
 		i, err := blockchain.InsertChain(blocks)
+		endImport(cb.Hash())
 		if err != nil {
 			if b.BlockHeader == nil {
 				t.LastBlockError = err.Error()
@@ -480,14 +483,17 @@ func (t *BlockTest) validateImportedHeaders(cm *core.BlockChain, validBlocks []b
 	return nil
 }
 
-func (bb *btBlock) decode() (*types.Block, error) {
+// decode returns the fixture block, with its delivered access list attached
+// when that list is the one the header commits to, and whether a delivered
+// list was dropped.
+func (bb *btBlock) decode() (*types.Block, bool, error) {
 	data, err := hexutil.Decode(bb.Rlp)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var b types.Block
 	if err = rlp.DecodeBytes(data, &b); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// The access list is delivered beside the block, as it is from a peer in
 	// sync, so it is used only if it is the one the header commits to.
@@ -501,7 +507,56 @@ func (bb *btBlock) decode() (*types.Block, error) {
 	case b.Header().BlockAccessListHash == nil || list.Hash() != *b.Header().BlockAccessListHash:
 		log.Debug("Dropped block access list", "number", b.NumberU64(), "hash", b.Hash(), "err", "hash mismatch")
 	default:
-		return b.WithAccessListUnsafe(list), nil
+		return b.WithAccessListUnsafe(list), false, nil
 	}
-	return &b, nil
+	return &b, list != nil || err != nil, nil
+}
+
+// imports tracks the blocks being inserted by every running block test, so a
+// block's execution can be tied to the import that dropped its delivered access
+// list. Core logs a block's execution by hash alone, and fixtures run in
+// parallel can import the same block, with and without a valid list, so only
+// one import of a given hash runs at a time.
+var imports = struct {
+	lock     sync.Mutex
+	inFlight map[common.Hash]chan struct{}
+	dropped  map[common.Hash]bool
+}{
+	inFlight: make(map[common.Hash]chan struct{}),
+	dropped:  make(map[common.Hash]bool),
+}
+
+// beginImport waits until no other import of the block is in flight, then
+// records whether this one dropped the block's delivered access list.
+func beginImport(hash common.Hash, dropped bool) {
+	imports.lock.Lock()
+	defer imports.lock.Unlock()
+	for {
+		done, busy := imports.inFlight[hash]
+		if !busy {
+			break
+		}
+		imports.lock.Unlock()
+		<-done
+		imports.lock.Lock()
+	}
+	imports.inFlight[hash] = make(chan struct{})
+	imports.dropped[hash] = dropped
+}
+
+// endImport releases the block for the next import of it.
+func endImport(hash common.Hash) {
+	imports.lock.Lock()
+	defer imports.lock.Unlock()
+	close(imports.inFlight[hash])
+	delete(imports.inFlight, hash)
+	delete(imports.dropped, hash)
+}
+
+// AccessListDropped reports whether the block with the given hash is being
+// imported by a block test that dropped its delivered access list.
+func AccessListDropped(hash common.Hash) bool {
+	imports.lock.Lock()
+	defer imports.lock.Unlock()
+	return imports.dropped[hash]
 }

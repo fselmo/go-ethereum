@@ -823,6 +823,86 @@ func TestBlockAccessListDropped(t *testing.T) {
 	}
 }
 
+// TestBlockAccessListDroppedTwins checks that the report ties a dropped list to
+// the import that dropped it. Fixtures run in parallel import the same block,
+// some delivering its own list and some a tampered one, so every clean import
+// must report the parallel path and every tampered one bad-access-list.
+func TestBlockAccessListDroppedTwins(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("./testdata/blocktest_bal.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const pairs = 4
+	dir := t.TempDir()
+	for i := 0; i < 2*pairs; i++ {
+		var fixtures map[string]map[string]any
+		if err := json.Unmarshal(src, &fixtures); err != nil {
+			t.Fatal(err)
+		}
+		renamed := make(map[string]map[string]any)
+		for name, test := range fixtures {
+			if i%2 == 1 {
+				block := test["blocks"].([]any)[0].(map[string]any)
+				list := block["blockAccessList"].([]any)
+				block["blockAccessList"] = list[:len(list)-1]
+			}
+			renamed[fmt.Sprintf("%s-%d", name, i)] = test
+		}
+		out, err := json.Marshal(renamed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("twin%d.json", i)), out, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		args      []string
+		wantClean executionEvent
+	}{
+		{[]string{"blocktest", "--bal-report", "--workers", "8", dir}, executionEvent{Path: "parallel"}},
+		{[]string{"blocktest", "--bal-report", "--bal.sequential", "--workers", "8", dir}, executionEvent{Path: "sequential", Reason: "disabled"}},
+	} {
+		tt := cmdtest.NewTestCmd(t, nil)
+		tt.Run("evm-test", tc.args...)
+		stdout := tt.Output()
+		tt.WaitExit()
+		stderr := tt.StderrText()
+
+		var results []testResult
+		if err := json.Unmarshal(stdout, &results); err != nil {
+			t.Fatalf("%v: stdout is not a JSON result list: %v\n%s", tc.args, err, stdout)
+		}
+		if len(results) != 2*pairs {
+			t.Fatalf("%v: %d results, want %d", tc.args, len(results), 2*pairs)
+		}
+		for _, r := range results {
+			if !r.Pass {
+				t.Fatalf("%v: %s failed: %s", tc.args, r.Name, r.Error)
+			}
+		}
+		counts := make(map[executionEvent]int)
+		for _, line := range strings.Split(stderr, "\n") {
+			if !strings.Contains(line, `"event"`) {
+				continue
+			}
+			var event executionEvent
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				t.Fatalf("%v: bad event line %q: %v", tc.args, line, err)
+			}
+			counts[executionEvent{Path: event.Path, Reason: event.Reason}]++
+		}
+		want := map[executionEvent]int{
+			tc.wantClean: pairs,
+			{Path: "sequential", Reason: "bad-access-list"}: pairs,
+		}
+		if !reflect.DeepEqual(counts, want) {
+			t.Fatalf("%v: decision lines %v, want %v", tc.args, counts, want)
+		}
+	}
+}
+
 func TestEvmRunRegEx(t *testing.T) {
 	t.Parallel()
 	tt := cmdtest.NewTestCmd(t, nil)

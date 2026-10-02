@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/tests"
 	"github.com/urfave/cli/v2"
 )
 
@@ -117,20 +118,19 @@ type executionEvent struct {
 // passes every other record on to the wrapped handler. The runners install it
 // only under --bal-report.
 //
-// Core only sees that a block has no access list, so the reporter also notes
-// the blocks whose delivered list blocktest dropped for not matching the
-// header, and reports those as bad-access-list whatever reason core gave.
+// Core only sees that a block has no access list, so the reporter asks
+// blocktest whether the import running the block dropped its delivered list,
+// and reports that as bad-access-list whatever reason core gave.
 type executionReporter struct {
-	inner   slog.Handler
-	out     io.Writer
-	lock    *sync.Mutex
-	dropped map[common.Hash]struct{} // guarded by lock
+	inner slog.Handler
+	out   io.Writer
+	lock  *sync.Mutex
 }
 
 // reportExecution installs an executionReporter in front of the given log
 // handler, writing the events to stderr.
 func reportExecution(inner slog.Handler) {
-	log.SetDefault(log.NewLogger(&executionReporter{inner: inner, out: os.Stderr, lock: new(sync.Mutex), dropped: make(map[common.Hash]struct{})}))
+	log.SetDefault(log.NewLogger(&executionReporter{inner: inner, out: os.Stderr, lock: new(sync.Mutex)}))
 }
 
 // discardLogs silences logging for --fuzz, keeping the execution events when
@@ -148,11 +148,6 @@ func (h *executionReporter) Enabled(ctx context.Context, level slog.Level) bool 
 }
 
 func (h *executionReporter) Handle(ctx context.Context, r slog.Record) error {
-	if r.Message == "Dropped block access list" {
-		h.lock.Lock()
-		h.dropped[recordHash(r)] = struct{}{}
-		h.lock.Unlock()
-	}
 	if r.Message != "Executing block" {
 		if !h.inner.Enabled(ctx, r.Level) {
 			return nil
@@ -173,36 +168,23 @@ func (h *executionReporter) Handle(ctx context.Context, r slog.Record) error {
 		}
 		return true
 	})
-	h.lock.Lock()
-	defer h.lock.Unlock()
-	if _, ok := h.dropped[event.Hash]; ok {
-		delete(h.dropped, event.Hash)
+	if tests.AccessListDropped(event.Hash) {
 		event.Reason = "bad-access-list"
 	}
 	out, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
+	h.lock.Lock()
+	defer h.lock.Unlock()
 	_, err = fmt.Fprintln(h.out, string(out))
 	return err
 }
 
-// recordHash returns the block hash attached to a log record.
-func recordHash(r slog.Record) (hash common.Hash) {
-	r.Attrs(func(a slog.Attr) bool {
-		if a.Key == "hash" {
-			hash, _ = a.Value.Any().(common.Hash)
-			return false
-		}
-		return true
-	})
-	return hash
-}
-
 func (h *executionReporter) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &executionReporter{inner: h.inner.WithAttrs(attrs), out: h.out, lock: h.lock, dropped: h.dropped}
+	return &executionReporter{inner: h.inner.WithAttrs(attrs), out: h.out, lock: h.lock}
 }
 
 func (h *executionReporter) WithGroup(name string) slog.Handler {
-	return &executionReporter{inner: h.inner.WithGroup(name), out: h.out, lock: h.lock, dropped: h.dropped}
+	return &executionReporter{inner: h.inner.WithGroup(name), out: h.out, lock: h.lock}
 }
