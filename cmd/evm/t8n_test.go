@@ -949,6 +949,36 @@ func TestExpectedException(t *testing.T) {
 	}
 }
 
+// TestRunnersTakeSeveralPaths checks that the test runners run every path they
+// are given, not only the first.
+func TestRunnersTakeSeveralPaths(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		runner string
+		files  []string
+	}{
+		{"blocktest", []string{"./testdata/blocktest_bal.json", "./testdata/blocktest_exception.json"}},
+		{"enginetest", []string{"./testdata/enginetest_bal.json", "./testdata/enginetest_exception.json"}},
+		{"statetest", []string{"./testdata/statetest.json", "./testdata/statetest_exception.json"}},
+	} {
+		count := func(args ...string) int {
+			tt := cmdtest.NewTestCmd(t, nil)
+			tt.Run("evm-test", append([]string{tc.runner}, args...)...)
+			stdout := tt.Output()
+			tt.WaitExit()
+			var results []testResult
+			if err := json.Unmarshal(stdout, &results); err != nil {
+				t.Fatalf("%s %v: stdout is not a JSON result list: %v\n%s", tc.runner, args, err, stdout)
+			}
+			return len(results)
+		}
+		want := count(tc.files[0]) + count(tc.files[1])
+		if have := count(tc.files...); have != want {
+			t.Errorf("%s with %d paths: have %d results, want %d", tc.runner, len(tc.files), have, want)
+		}
+	}
+}
+
 // TestCheckException checks the mapping of geth's errors to EEST exceptions.
 func TestCheckException(t *testing.T) {
 	for i, tc := range []struct {

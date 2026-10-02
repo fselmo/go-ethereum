@@ -49,8 +49,8 @@ var (
 var stateTestCommand = &cli.Command{
 	Action:    stateTestCmd,
 	Name:      "statetest",
-	Usage:     "Executes the given state tests. Filenames can be fed via standard input (batch mode) or as an argument (one-off execution).",
-	ArgsUsage: "<file>",
+	Usage:     "Executes the given state tests. Filenames can be fed via standard input (batch mode) or as arguments.",
+	ArgsUsage: "<path>...",
 	Flags: slices.Concat([]cli.Flag{
 		BenchFlag,
 		DumpFlag,
@@ -63,11 +63,9 @@ var stateTestCommand = &cli.Command{
 }
 
 func stateTestCmd(ctx *cli.Context) error {
-	path := ctx.Args().First()
-
-	// If path is provided, run the tests at that path.
-	if len(path) != 0 {
-		results, err := runFiles(ctx, collectFiles(path), runStateTest)
+	// If paths are provided, run the tests at those paths.
+	if ctx.Args().Present() {
+		results, err := runFiles(ctx, collectFiles(ctx.Args().Slice()...), runStateTest)
 		if err != nil {
 			return err
 		}

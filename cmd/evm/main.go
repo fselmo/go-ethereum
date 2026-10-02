@@ -336,26 +336,28 @@ func tracerFromFlags(ctx *cli.Context) *tracing.Hooks {
 	}
 }
 
-// collectFiles walks the given path. If the path is a directory, it will
-// return a list of all accumulates all files with json extension.
-// Otherwise (if path points to a file), it will return the path.
-func collectFiles(path string) []string {
+// collectFiles walks the given paths. A directory contributes all files with
+// json extension below it; a path that points to a file is used as is.
+func collectFiles(paths ...string) []string {
 	var out []string
-	if info, err := os.Stat(path); err == nil && !info.IsDir() {
-		// User explicitly pointed out a file, ignore extension.
-		return []string{path}
-	}
-	err := filepath.Walk(path, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && filepath.Ext(info.Name()) == ".json" {
+	for _, path := range paths {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			// User explicitly pointed out a file, ignore extension.
 			out = append(out, path)
+			continue
 		}
-		return nil
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		err := filepath.Walk(path, func(path string, info fs.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && filepath.Ext(info.Name()) == ".json" {
+				out = append(out, path)
+			}
+			return nil
+		})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	}
 	return out
 }
