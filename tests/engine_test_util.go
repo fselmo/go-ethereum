@@ -46,6 +46,11 @@ type EngineTest struct {
 	json                etJSON
 	LastPayloadStatus   string // set during Run, exposed for the runner
 	LastValidationError string // actual validation error from engine
+
+	// CheckException, if set, is called with an invalid payload's expected
+	// validation error and the one the engine returned, and fails the test if
+	// it returns an error.
+	CheckException func(expected, err string) error
 }
 
 func (t *EngineTest) UnmarshalJSON(in []byte) error {
@@ -228,6 +233,13 @@ func (t *EngineTest) Run(scheme string, sequential bool, tracer *tracing.Hooks, 
 			if rpcErr.ErrorCode() != *payload.ErrorCode {
 				return fmt.Errorf("payload %d: expected error code %d, got %d", i, *payload.ErrorCode, rpcErr.ErrorCode())
 			}
+			// As in EEST's consume engine, the code is the expectation; the
+			// fixture's validation error is not matched against the message.
+			t.LastValidationError = fmt.Sprintf("%d: %v", rpcErr.ErrorCode(), rpcErr)
+			var dataErr rpc.DataError
+			if errors.As(err, &dataErr) && dataErr.ErrorData() != nil {
+				t.LastValidationError += fmt.Sprintf(" (%v)", dataErr.ErrorData())
+			}
 			continue // error code matched, move to next payload
 		}
 		if err != nil {
@@ -242,6 +254,15 @@ func (t *EngineTest) Run(scheme string, sequential bool, tracer *tracing.Hooks, 
 		if payload.ValidationError != "" {
 			if status.Status != engine.INVALID {
 				return fmt.Errorf("payload %d: expected INVALID status for validation error %q, got %s", i, payload.ValidationError, status.Status)
+			}
+			if t.CheckException != nil {
+				var got string
+				if status.ValidationError != nil {
+					got = *status.ValidationError
+				}
+				if err := t.CheckException(payload.ValidationError, got); err != nil {
+					return fmt.Errorf("payload %d: %v", i, err)
+				}
 			}
 			continue // invalid payload as expected, move to next
 		}
