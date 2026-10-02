@@ -749,7 +749,8 @@ func TestBlockAccessListExecution(t *testing.T) {
 // TestBlockAccessListDropped checks that blocktest drops a delivered access
 // list that differs from the one the header commits to, in either fixture
 // field, and imports the block with the list computed in execution, as the
-// downloader does with a peer's list. The report names the dropped list.
+// downloader does with a peer's list. The report names the dropped list in
+// both modes.
 func TestBlockAccessListDropped(t *testing.T) {
 	t.Parallel()
 	src, err := os.ReadFile("./testdata/blocktest_bal.json")
@@ -788,7 +789,7 @@ func TestBlockAccessListDropped(t *testing.T) {
 			wantReason string
 		}{
 			{[]string{"blocktest", "--bal-report", path}, "sequential", "bad-access-list"},
-			{[]string{"blocktest", "--bal-report", "--bal.sequential", path}, "sequential", "disabled"},
+			{[]string{"blocktest", "--bal-report", "--bal.sequential", path}, "sequential", "bad-access-list"},
 		} {
 			tt := cmdtest.NewTestCmd(t, nil)
 			tt.Run("evm-test", tc.args...)

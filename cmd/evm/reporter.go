@@ -119,7 +119,7 @@ type executionEvent struct {
 //
 // Core only sees that a block has no access list, so the reporter also notes
 // the blocks whose delivered list blocktest dropped for not matching the
-// header, and reports those as bad-access-list instead of no-access-list.
+// header, and reports those as bad-access-list whatever reason core gave.
 type executionReporter struct {
 	inner   slog.Handler
 	out     io.Writer
@@ -177,9 +177,7 @@ func (h *executionReporter) Handle(ctx context.Context, r slog.Record) error {
 	defer h.lock.Unlock()
 	if _, ok := h.dropped[event.Hash]; ok {
 		delete(h.dropped, event.Hash)
-		if event.Reason == "no-access-list" {
-			event.Reason = "bad-access-list"
-		}
+		event.Reason = "bad-access-list"
 	}
 	out, err := json.Marshal(event)
 	if err != nil {
