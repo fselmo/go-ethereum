@@ -26,9 +26,11 @@ import (
 // The tables below map geth's error messages to the exception names that
 // execution-spec-tests (EEST) fixtures expect. They are a copy of EEST's
 // GethExceptionMapper, the mapping its consume command applies to geth:
-// packages/testing/src/execution_testing/client_clis/clis/geth.py, blob
-// b59953a93e9525c4ea9e1e6baf2d1340ca6331a5 (execution-specs branch
-// fix/bal-pre-fork-header-exception, not yet merged). Keep them in sync with it.
+// packages/testing/src/execution_testing/client_clis/clis/geth.py. Two
+// execution-specs branches, neither merged yet, change that file, and the
+// tables hold both changes: fix/bal-pre-fork-header-exception (blob
+// b59953a93e9525c4ea9e1e6baf2d1340ca6331a5) and fix/geth-exception-mapper
+// (blob 93ca1680f622ff739df785937b659fd8fcdd4f96). Keep them in sync with it.
 
 type exceptionSubstring struct {
 	name      string
@@ -83,6 +85,7 @@ var exceptionSubstrings = []exceptionSubstring{
 	{"BlockException.INVALID_BLOCK_NUMBER", "invalid block number"},
 	{"BlockException.EXTRA_DATA_TOO_BIG", "invalid extradata length"},
 	{"BlockException.INVALID_RECEIPTS_ROOT", "invalid receipt root hash"},
+	{"BlockException.INVALID_WITHDRAWALS_ROOT", "withdrawals root hash mismatch"},
 	{"BlockException.INVALID_LOG_BLOOM", "invalid bloom"},
 	{"BlockException.INVALID_STATE_ROOT", "invalid merkle root"},
 	{"BlockException.GAS_USED_OVERFLOW", "bal validation failure"},
@@ -91,6 +94,7 @@ var exceptionSubstrings = []exceptionSubstring{
 var exceptionRegexps = []exceptionRegexp{
 	{"TransactionException.INVALID_SIGNATURE_VRS", regexp.MustCompile(`recovery failed`)},
 	{"TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED", regexp.MustCompile(`blob gas used \d+ exceeds maximum allowance \d+`)},
+	{"TransactionException.TYPE_3_TX_PRE_FORK", regexp.MustCompile(`data blobs present in block body`)},
 	{"BlockException.BLOB_GAS_USED_ABOVE_LIMIT", regexp.MustCompile(`blob gas used \d+ exceeds maximum allowance \d+`)},
 	{"BlockException.INVALID_GAS_USED_ABOVE_LIMIT", regexp.MustCompile(`invalid gasUsed: have \d+, gasLimit \d+`)},
 	{"BlockException.INVALID_GAS_USED", regexp.MustCompile(`invalid gas used \(remote: \d+ local: \d+\)`)},
