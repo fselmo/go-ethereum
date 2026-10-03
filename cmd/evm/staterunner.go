@@ -58,6 +58,7 @@ var stateTestCommand = &cli.Command{
 		HumanReadableFlag,
 		idxFlag,
 		RunFlag,
+		WorkersFlag,
 	}, traceFlags),
 }
 
@@ -66,16 +67,9 @@ func stateTestCmd(ctx *cli.Context) error {
 
 	// If path is provided, run the tests at that path.
 	if len(path) != 0 {
-		var (
-			collected = collectFiles(path)
-			results   []testResult
-		)
-		for _, fname := range collected {
-			r, err := runStateTest(ctx, fname)
-			if err != nil {
-				return err
-			}
-			results = append(results, r...)
+		results, err := runFiles(ctx, collectFiles(path), runStateTest)
+		if err != nil {
+			return err
 		}
 		report(ctx, results)
 		return nil
