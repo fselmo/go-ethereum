@@ -186,7 +186,7 @@ type btHeaderMarshaling struct {
 	SlotNumber    *math.HexOrDecimal64
 }
 
-func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, tracer *tracing.Hooks, postCheck func(error, *core.BlockChain)) (result error) {
+func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, sequential bool, tracer *tracing.Hooks, postCheck func(error, *core.BlockChain)) (result error) {
 	config, ok := Forks[t.json.Network]
 	if !ok {
 		return UnsupportedForkError{t.json.Network}
@@ -234,7 +234,8 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, tracer *t
 		Preimages:      true,
 		TxLookupLimit:  -1, // disable tx indexing
 		VmConfig: vm.Config{
-			Tracer: tracer,
+			Tracer:                   tracer,
+			DisableParallelExecution: sequential,
 		},
 		StatelessSelfValidation: witness,
 	}
