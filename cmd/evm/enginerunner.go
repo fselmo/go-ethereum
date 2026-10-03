@@ -40,8 +40,8 @@ import (
 var engineTestCommand = &cli.Command{
 	Action:    engineTestCmd,
 	Name:      "enginetest",
-	Usage:     "Executes the given engine API tests. Filenames can be fed via standard input (batch mode) or as an argument (one-off execution).",
-	ArgsUsage: "<path>",
+	Usage:     "Executes the given engine API tests. Filenames can be fed via standard input (batch mode) or as arguments.",
+	ArgsUsage: "<path>...",
 	Flags: slices.Concat([]cli.Flag{
 		DumpFlag,
 		HumanReadableFlag,
@@ -59,11 +59,13 @@ func engineTestCmd(ctx *cli.Context) error {
 		reportExecution(log.Root().Handler())
 	}
 
-	path := ctx.Args().First()
-
-	// If path is provided, run the tests at that path.
-	if len(path) != 0 {
-		results, err := runFiles(ctx, collectFiles(path), runEngineTest)
+	// If paths are provided, run the tests at those paths.
+	if ctx.Args().Present() {
+		files, err := collectFiles(ctx.Args().Slice()...)
+		if err != nil {
+			return err
+		}
+		results, err := runFiles(ctx, files, runEngineTest)
 		if err != nil {
 			return err
 		}

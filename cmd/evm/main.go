@@ -336,28 +336,39 @@ func tracerFromFlags(ctx *cli.Context) *tracing.Hooks {
 	}
 }
 
-// collectFiles walks the given path. If the path is a directory, it will
-// return a list of all accumulates all files with json extension.
-// Otherwise (if path points to a file), it will return the path.
-func collectFiles(path string) []string {
+// collectFiles walks the given paths. A directory contributes all files with
+// json extension below it; a path that points to a file is used as is. A path
+// that does not exist or cannot be read is an error, returned before any test
+// runs.
+func collectFiles(paths ...string) ([]string, error) {
 	var out []string
-	if info, err := os.Stat(path); err == nil && !info.IsDir() {
-		// User explicitly pointed out a file, ignore extension.
-		return []string{path}
-	}
-	err := filepath.Walk(path, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && filepath.Ext(info.Name()) == ".json" {
+	for _, path := range paths {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			// User explicitly pointed out a file, ignore extension.
 			out = append(out, path)
+			continue
 		}
-		return nil
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		err := filepath.Walk(path, func(path string, info fs.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && filepath.Ext(info.Name()) == ".json" {
+				out = append(out, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
-	return out
+	for _, path := range out {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		f.Close()
+	}
+	return out, nil
 }
 
 // runFiles runs the test files with run, on as many files at once as the workers

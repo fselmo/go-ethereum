@@ -903,6 +903,64 @@ func TestBlockAccessListDroppedTwins(t *testing.T) {
 	}
 }
 
+// TestRunnersTakeSeveralPaths checks that the test runners run every path they
+// are given, not only the first.
+func TestRunnersTakeSeveralPaths(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		runner string
+		files  []string
+	}{
+		{"blocktest", []string{"./testdata/blocktest_bal.json", "./testdata/blocktest_exception.json"}},
+		{"enginetest", []string{"./testdata/enginetest_bal.json", "./testdata/enginetest_exception.json"}},
+		{"statetest", []string{"./testdata/statetest.json", "./testdata/statetest_exception.json"}},
+	} {
+		count := func(args ...string) int {
+			tt := cmdtest.NewTestCmd(t, nil)
+			tt.Run("evm-test", append([]string{tc.runner}, args...)...)
+			stdout := tt.Output()
+			tt.WaitExit()
+			var results []testResult
+			if err := json.Unmarshal(stdout, &results); err != nil {
+				t.Fatalf("%s %v: stdout is not a JSON result list: %v\n%s", tc.runner, args, err, stdout)
+			}
+			return len(results)
+		}
+		want := count(tc.files[0]) + count(tc.files[1])
+		if have := count(tc.files...); have != want {
+			t.Errorf("%s with %d paths: have %d results, want %d", tc.runner, len(tc.files), have, want)
+		}
+	}
+}
+
+// TestRunnersRejectMissingPaths checks that a path that does not exist fails
+// the run before any test runs, instead of being skipped.
+func TestRunnersRejectMissingPaths(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		runner string
+		file   string
+	}{
+		{"blocktest", "./testdata/blocktest_bal.json"},
+		{"enginetest", "./testdata/enginetest_bal.json"},
+		{"statetest", "./testdata/statetest.json"},
+	} {
+		tt := cmdtest.NewTestCmd(t, nil)
+		tt.Run("evm-test", tc.runner, tc.file, "./testdata/does-not-exist.json")
+		stdout := tt.Output()
+		tt.WaitExit()
+		if tt.ExitStatus() == 0 {
+			t.Errorf("%s: exit status 0 with a missing path", tc.runner)
+		}
+		if len(stdout) != 0 {
+			t.Errorf("%s: tests ran despite a missing path:\n%s", tc.runner, stdout)
+		}
+		if stderr := tt.StderrText(); !strings.Contains(stderr, "does-not-exist.json") {
+			t.Errorf("%s: stderr does not name the missing path:\n%s", tc.runner, stderr)
+		}
+	}
+}
+
 func TestEvmRunRegEx(t *testing.T) {
 	t.Parallel()
 	tt := cmdtest.NewTestCmd(t, nil)
