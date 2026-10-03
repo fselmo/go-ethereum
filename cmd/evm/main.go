@@ -74,6 +74,10 @@ var (
 		Usage: "Number of test files to run in parallel (0 = one per CPU)",
 		Value: 1,
 	}
+	SequentialFlag = &cli.BoolFlag{
+		Name:  "bal.sequential",
+		Usage: "Execute every block sequentially, even one the EIP-7928 parallel processor could run. The delivered block access list is still validated.",
+	}
 
 	// Debugging flags.
 	DumpFlag = &cli.BoolFlag{
