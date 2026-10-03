@@ -140,6 +140,7 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		if result.Pass && test.LastValidationError != "" {
 			result.Error = test.LastValidationError
 		}
+		result.Rejections = test.Rejections
 
 		if ctx.IsSet(FuzzFlag.Name) {
 			report(ctx, []testResult{*result})

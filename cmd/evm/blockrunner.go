@@ -142,6 +142,7 @@ func runBlockTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		if result.Pass && test.LastBlockError != "" {
 			result.Error = test.LastBlockError
 		}
+		result.Rejections = test.Rejections
 
 		// When fuzzing, write results after every block
 		if ctx.Bool(FuzzFlag.Name) {
