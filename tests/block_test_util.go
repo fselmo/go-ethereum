@@ -26,6 +26,7 @@ import (
 	"math/big"
 	"os"
 	"reflect"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -37,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -72,6 +74,77 @@ type btBlock struct {
 	ExpectException string
 	Rlp             string
 	UncleHeaders    []*btHeader
+
+	// The EIP-7928 block access list travels beside the block, not in its RLP.
+	// Fixtures carry it as blockAccessList, or, for a block expected to be
+	// rejected, only inside rlp_decoded.
+	BlockAccessList json.RawMessage `json:"blockAccessList"`
+	RlpDecoded      *struct {
+		BlockAccessList json.RawMessage `json:"blockAccessList"`
+	} `json:"rlp_decoded"`
+}
+
+// balQuantityKeys are the access list fields holding hex quantities, which the
+// fixtures zero-pad ("0x00") and geth's hexutil decoders reject.
+var balQuantityKeys = map[string]bool{
+	"blockAccessIndex": true, "postNonce": true, "postBalance": true,
+	"postValue": true, "slot": true, "storageReads": true,
+}
+
+// trimHexQuantity strips the leading zeros from a hex quantity.
+func trimHexQuantity(v string) string {
+	if !strings.HasPrefix(v, "0x") {
+		return v
+	}
+	digits := strings.TrimLeft(v[2:], "0")
+	if digits == "" {
+		digits = "0"
+	}
+	return "0x" + digits
+}
+
+// trimBALQuantities rewrites the hex quantities in a decoded access list JSON
+// tree into the form geth's decoders accept, leaving addresses and code alone.
+func trimBALQuantities(node any, quantity bool) any {
+	switch n := node.(type) {
+	case map[string]any:
+		for k, v := range n {
+			n[k] = trimBALQuantities(v, balQuantityKeys[k])
+		}
+	case []any:
+		for i, v := range n {
+			n[i] = trimBALQuantities(v, quantity)
+		}
+	case string:
+		if quantity {
+			return trimHexQuantity(n)
+		}
+	}
+	return node
+}
+
+// accessList decodes the fixture's block access list, if it carries one.
+func (bb *btBlock) accessList() (*bal.BlockAccessList, error) {
+	raw := bb.BlockAccessList
+	if len(raw) == 0 && bb.RlpDecoded != nil {
+		raw = bb.RlpDecoded.BlockAccessList
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var tree any
+	if err := json.Unmarshal(raw, &tree); err != nil {
+		return nil, err
+	}
+	trimmed, err := json.Marshal(trimBALQuantities(tree, false))
+	if err != nil {
+		return nil, err
+	}
+	var list bal.BlockAccessList
+	if err := json.Unmarshal(trimmed, &list); err != nil {
+		return nil, err
+	}
+	return &list, nil
 }
 
 //go:generate go run github.com/fjl/gencodec -type btHeader -field-override btHeaderMarshaling -out gen_btheader.go
@@ -406,12 +479,30 @@ func (t *BlockTest) validateImportedHeaders(cm *core.BlockChain, validBlocks []b
 	return nil
 }
 
+// decode returns the fixture block, with its delivered access list attached
+// when that list is the one the header commits to.
 func (bb *btBlock) decode() (*types.Block, error) {
 	data, err := hexutil.Decode(bb.Rlp)
 	if err != nil {
 		return nil, err
 	}
 	var b types.Block
-	err = rlp.DecodeBytes(data, &b)
-	return &b, err
+	if err = rlp.DecodeBytes(data, &b); err != nil {
+		return nil, err
+	}
+	// The access list is delivered beside the block, as it is from a peer in
+	// sync, so it is used only if it is the one the header commits to.
+	// Otherwise it is dropped, like the downloader drops a peer's list, and
+	// the block is judged on its header with the list computed in execution.
+	list, err := bb.accessList()
+	switch {
+	case err != nil:
+		log.Debug("Dropped block access list", "number", b.NumberU64(), "hash", b.Hash(), "err", err)
+	case list == nil:
+	case b.Header().BlockAccessListHash == nil || list.Hash() != *b.Header().BlockAccessListHash:
+		log.Debug("Dropped block access list", "number", b.NumberU64(), "hash", b.Hash(), "err", "hash mismatch")
+	default:
+		return b.WithAccessListUnsafe(list), nil
+	}
+	return &b, nil
 }
