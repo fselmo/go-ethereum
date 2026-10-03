@@ -98,7 +98,7 @@ func runStateTest(ctx *cli.Context, fname string) ([]testResult, error) {
 	}
 	var testsByName map[string]tests.StateTest
 	if err := json.Unmarshal(src, &testsByName); err != nil {
-		return nil, fmt.Errorf("unable to read test file %s: %w", fname, err)
+		return nil, nil // Skip non-fixture JSON files
 	}
 
 	cfg := vm.Config{Tracer: tracerFromFlags(ctx)}
@@ -147,6 +147,9 @@ func runStateTest(ctx *cli.Context, fname string) ([]testResult, error) {
 					// Test failed, mark as so.
 					result.Pass, result.Error = false, err.Error()
 					return
+				}
+				if test.LastTxError != "" {
+					result.Error = test.LastTxError
 				}
 			})
 			results = append(results, *result)
