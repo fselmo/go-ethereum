@@ -41,6 +41,7 @@ var blockTestCommand = &cli.Command{
 	Flags: slices.Concat([]cli.Flag{
 		DumpFlag,
 		HumanReadableFlag,
+		JSONLFlag,
 		RunFlag,
 		WitnessCrossCheckFlag,
 		FuzzFlag,

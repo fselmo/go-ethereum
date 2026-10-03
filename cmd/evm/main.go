@@ -84,6 +84,10 @@ var (
 		Name:  "human",
 		Usage: "\"Human-readable\" output",
 	}
+	JSONLFlag = &cli.BoolFlag{
+		Name:  "jsonl",
+		Usage: "Output one JSON result per line instead of a JSON array",
+	}
 	StatDumpFlag = &cli.BoolFlag{
 		Name:  "statdump",
 		Usage: "displays stack and heap memory information",

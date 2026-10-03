@@ -84,6 +84,13 @@ func report(ctx *cli.Context, results []testResult) {
 		fmt.Printf("%d tests passed, %d tests failed.\n", pass, len(results)-pass)
 		return
 	}
+	if ctx.Bool(JSONLFlag.Name) {
+		for _, r := range results {
+			out, _ := json.Marshal(r)
+			fmt.Println(string(out))
+		}
+		return
+	}
 	out, _ := json.MarshalIndent(results, "", "  ")
 	fmt.Println(string(out))
 }
