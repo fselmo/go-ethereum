@@ -895,6 +895,119 @@ func balEvents(t *testing.T, stderr string) []executionEvent {
 	return events
 }
 
+// TestRunnersTakeSeveralPaths checks that the test runners run every path they
+// are given, not only the first.
+func TestRunnersTakeSeveralPaths(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("./testdata/statetest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateCopy := filepath.Join(t.TempDir(), "statetest.json")
+	if err := os.WriteFile(stateCopy, src, 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		runner string
+		files  []string
+	}{
+		{"blocktest", []string{"./testdata/blocktest_bal.json", "./testdata/blocktest_exception.json"}},
+		{"enginetest", []string{"./testdata/enginetest_bal.json", "./testdata/enginetest_exception.json"}},
+		{"statetest", []string{"./testdata/statetest.json", stateCopy}},
+	} {
+		count := func(args ...string) int {
+			tt := cmdtest.NewTestCmd(t, nil)
+			tt.Run("evm-test", append([]string{tc.runner}, args...)...)
+			stdout := tt.Output()
+			tt.WaitExit()
+			var results []testResult
+			if err := json.Unmarshal(stdout, &results); err != nil {
+				t.Fatalf("%s %v: stdout is not a JSON result list: %v\n%s", tc.runner, args, err, stdout)
+			}
+			return len(results)
+		}
+		want := count(tc.files[0]) + count(tc.files[1])
+		if have := count(tc.files...); have != want {
+			t.Errorf("%s with %d paths: have %d results, want %d", tc.runner, len(tc.files), have, want)
+		}
+	}
+}
+
+// TestRunnersRejectBadPaths checks that a path that does not exist, or a file
+// that is not valid JSON, fails the run with no results printed, instead of
+// being skipped.
+func TestRunnersRejectBadPaths(t *testing.T) {
+	t.Parallel()
+	corrupt := filepath.Join(t.TempDir(), "corrupt.json")
+	if err := os.WriteFile(corrupt, []byte(`{"truncated": `), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		runner string
+		file   string
+	}{
+		{"blocktest", "./testdata/blocktest_bal.json"},
+		{"enginetest", "./testdata/enginetest_bal.json"},
+		{"statetest", "./testdata/statetest.json"},
+	} {
+		for _, bad := range []string{"./testdata/does-not-exist.json", corrupt} {
+			tt := cmdtest.NewTestCmd(t, nil)
+			tt.Run("evm-test", tc.runner, tc.file, bad)
+			stdout := tt.Output()
+			tt.WaitExit()
+			if tt.ExitStatus() == 0 {
+				t.Errorf("%s %s: exit status 0", tc.runner, bad)
+			}
+			if len(stdout) != 0 {
+				t.Errorf("%s %s: results printed despite a bad path:\n%s", tc.runner, bad, stdout)
+			}
+			if stderr := tt.StderrText(); !strings.Contains(stderr, filepath.Base(bad)) {
+				t.Errorf("%s %s: stderr does not name the bad path:\n%s", tc.runner, bad, stderr)
+			}
+		}
+	}
+}
+
+// TestRunnersSkipMetaDirectory checks that a fixture directory's .meta folder,
+// which holds files that are not fixtures, is not run.
+func TestRunnersSkipMetaDirectory(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		runner string
+		file   string
+	}{
+		{"blocktest", "./testdata/blocktest_bal.json"},
+		{"enginetest", "./testdata/enginetest_bal.json"},
+		{"statetest", "./testdata/statetest.json"},
+	} {
+		dir := t.TempDir()
+		src, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, filepath.Base(tc.file)), src, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(dir, ".meta"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".meta", "index.json"), []byte(`{"test_cases": []}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		tt := cmdtest.NewTestCmd(t, nil)
+		tt.Run("evm-test", tc.runner, dir)
+		stdout := tt.Output()
+		tt.WaitExit()
+		var results []testResult
+		if err := json.Unmarshal(stdout, &results); err != nil {
+			t.Fatalf("%s: stdout is not a JSON result list: %v\n%s\n%s", tc.runner, err, stdout, tt.StderrText())
+		}
+		if len(results) == 0 {
+			t.Errorf("%s: no results for the fixture beside .meta", tc.runner)
+		}
+	}
+}
+
 func TestEvmRunRegEx(t *testing.T) {
 	t.Parallel()
 	tt := cmdtest.NewTestCmd(t, nil)
