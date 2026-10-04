@@ -127,6 +127,7 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		}
 
 		result.Fork = test.Network()
+		result.Rejections = test.Rejections
 
 		if ctx.Bool(FuzzFlag.Name) {
 			report(ctx, []testResult{*result})

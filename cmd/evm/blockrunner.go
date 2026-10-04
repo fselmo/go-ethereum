@@ -140,6 +140,7 @@ func runBlockTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		if result.Pass && finalRoot != nil {
 			result.Root = finalRoot
 		}
+		result.Rejections = test.Rejections
 
 		// When fuzzing, write results after every block
 		if ctx.Bool(FuzzFlag.Name) {
