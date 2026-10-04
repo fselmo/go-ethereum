@@ -1115,6 +1115,87 @@ func TestRunnersReportRejections(t *testing.T) {
 	}
 }
 
+// TestRunnersExitStatus checks that blocktest and enginetest exit non-zero when
+// a fixture fails, and that stdout still holds only the JSON results.
+func TestRunnersExitStatus(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		runner, list string
+		// fail makes the fixture expect its only, valid, entry to be rejected.
+		fail func(entry map[string]any)
+	}{
+		{
+			runner: "blocktest",
+			list:   "blocks",
+			fail: func(block map[string]any) {
+				delete(block, "blockHeader")
+				block["expectException"] = "BlockException.INVALID_BLOCK_ACCESS_LIST"
+			},
+		},
+		{
+			runner: "enginetest",
+			list:   "engineNewPayloads",
+			fail: func(payload map[string]any) {
+				payload["validationError"] = "BlockException.INVALID_BLOCK_ACCESS_LIST"
+			},
+		},
+	} {
+		run := func(path string) (int, []testResult) {
+			tt := cmdtest.NewTestCmd(t, nil)
+			tt.Run("evm-test", tc.runner, path)
+			stdout := tt.Output()
+			tt.WaitExit()
+			var results []testResult
+			if err := json.Unmarshal(stdout, &results); err != nil {
+				t.Fatalf("%s: stdout is not a JSON result list: %v\n%s", tc.runner, err, stdout)
+			}
+			return tt.ExitStatus(), results
+		}
+		clean := fmt.Sprintf("./testdata/%s_bal.json", tc.runner)
+		if status, results := run(clean); status != 0 || len(results) != 1 || !results[0].Pass {
+			t.Errorf("%s clean fixture: exit status %d, results %+v", tc.runner, status, results)
+		}
+
+		src, err := os.ReadFile(clean)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fixtures map[string]map[string]any
+		if err := json.Unmarshal(src, &fixtures); err != nil {
+			t.Fatal(err)
+		}
+		for _, fixture := range fixtures {
+			tc.fail(fixture[tc.list].([]any)[0].(map[string]any))
+		}
+		out, err := json.Marshal(fixtures)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), tc.runner+".json")
+		if err := os.WriteFile(path, out, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if status, results := run(path); status == 0 || len(results) != 1 || results[0].Pass {
+			t.Errorf("%s failing fixture: exit status %d, results %+v", tc.runner, status, results)
+		}
+	}
+}
+
+// TestEvmVersion checks that evm --version prints one line and exits 0.
+func TestEvmVersion(t *testing.T) {
+	t.Parallel()
+	tt := cmdtest.NewTestCmd(t, nil)
+	tt.Run("evm-test", "--version")
+	stdout := tt.Output()
+	tt.WaitExit()
+	if status := tt.ExitStatus(); status != 0 {
+		t.Errorf("exit status %d", status)
+	}
+	if lines := strings.Split(strings.TrimSpace(string(stdout)), "\n"); len(lines) != 1 || !strings.Contains(lines[0], " version ") {
+		t.Errorf("want one version line, have:\n%s", stdout)
+	}
+}
+
 func TestEvmRunRegEx(t *testing.T) {
 	t.Parallel()
 	tt := cmdtest.NewTestCmd(t, nil)

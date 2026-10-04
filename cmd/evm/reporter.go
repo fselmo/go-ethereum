@@ -98,6 +98,21 @@ func report(ctx *cli.Context, results []testResult) {
 	fmt.Println(string(out))
 }
 
+// failures returns an error counting the results that did not pass, if any,
+// so the run exits non-zero.
+func failures(results []testResult) error {
+	var failed int
+	for _, r := range results {
+		if !r.Pass {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d tests failed", failed, len(results))
+	}
+	return nil
+}
+
 // executionEvent reports which processor executed a block: the EIP-7928
 // parallel one or the sequential one, and for the latter the first condition
 // that ruled parallel out.

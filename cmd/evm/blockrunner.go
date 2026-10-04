@@ -66,7 +66,7 @@ func blockTestCmd(ctx *cli.Context) error {
 			return err
 		}
 		report(ctx, results)
-		return nil
+		return failures(results)
 	}
 	// Otherwise, read filenames from stdin and execute back-to-back.
 	scanner := bufio.NewScanner(os.Stdin)
