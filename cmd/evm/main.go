@@ -268,6 +268,7 @@ func init() {
 	app.Commands = []*cli.Command{
 		runCommand,
 		blockTestCommand,
+		engineTestCommand,
 		stateTestCommand,
 		stateTransitionCommand,
 		transactionCommand,
