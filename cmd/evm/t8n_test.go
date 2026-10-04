@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/internal/cmdtest"
 	"github.com/ethereum/go-ethereum/internal/reexec"
+	"github.com/ethereum/go-ethereum/tests"
 )
 
 func TestMain(m *testing.M) {
@@ -1004,6 +1006,111 @@ func TestRunnersSkipMetaDirectory(t *testing.T) {
 		}
 		if len(results) == 0 {
 			t.Errorf("%s: no results for the fixture beside .meta", tc.runner)
+		}
+	}
+}
+
+// TestRunnersReportRejections checks that blocktest and enginetest report
+// every rejected block with geth's own error and its index in the fixture, and
+// that the error does not decide whether the test passes: the expected
+// exceptions here name a different reason, and the tests still pass. A block
+// whose delivered access list matches its header is run with that list even
+// when it is then rejected.
+func TestRunnersReportRejections(t *testing.T) {
+	t.Parallel()
+	const unrelated = "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS"
+	rejectedHash := common.HexToHash("0x1b8e8678c0b5d3ec4ad6873b4739a7bd7da73d2af166ea4672140d83b38cf244")
+	const bad = "access list hash mismatch, local: 79fa24e990772eea49e38869e0148edec3eac2cb729d30899d869c3b8037f293, remote: bad19914b7e4665d1d7361029751c983b19b6090835c77d8138ae209e16d1c03"
+	for _, tc := range []struct {
+		runner, list string
+		// addRejected changes the fixture's invalid entry to expect an
+		// unrelated exception and appends a second one the client rejects.
+		addRejected func(entries []any) []any
+		want        []tests.Rejection
+	}{
+		{
+			runner: "blocktest",
+			list:   "blocks",
+			addRejected: func(blocks []any) []any {
+				blocks[0].(map[string]any)["expectException"] = unrelated
+				return append(blocks, map[string]any{"rlp": "0xc0", "expectException": unrelated})
+			},
+			want: []tests.Rejection{
+				{Index: 0, Hash: &rejectedHash, Error: bad},
+				{Index: 1, Error: "rlp: too few elements for types.extblock"},
+			},
+		},
+		{
+			runner: "enginetest",
+			list:   "engineNewPayloads",
+			addRejected: func(payloads []any) []any {
+				first := payloads[0].(map[string]any)
+				first["validationError"] = unrelated
+				// The same payload through engine_newPayloadV4, whose params do
+				// not fit Amsterdam, fails with a JSON-RPC error whose data
+				// names the cause.
+				second := maps.Clone(first)
+				delete(second, "validationError")
+				second["newPayloadVersion"] = "4"
+				second["errorCode"] = "-32602"
+				return append(payloads, second)
+			},
+			want: []tests.Rejection{
+				{Index: 0, Error: bad},
+				{Index: 1, Error: `-32602: Invalid parameters: {"err":"slotNumber not supported pre-amsterdam"}`},
+			},
+		},
+	} {
+		run := func(path string) (testResult, []executionEvent) {
+			tt := cmdtest.NewTestCmd(t, nil)
+			tt.Run("evm-test", tc.runner, "--bal-report", path)
+			stdout := tt.Output()
+			tt.WaitExit()
+			var results []testResult
+			if err := json.Unmarshal(stdout, &results); err != nil || len(results) != 1 {
+				t.Fatalf("%s: want one JSON result, err %v:\n%s", tc.runner, err, stdout)
+			}
+			if !strings.Contains(string(stdout), `"rejections": [`) {
+				t.Fatalf("%s: result has no rejections list:\n%s", tc.runner, stdout)
+			}
+			return results[0], balEvents(t, tt.StderrText())
+		}
+		if res, _ := run(fmt.Sprintf("./testdata/%s_bal.json", tc.runner)); !res.Pass || len(res.Rejections) != 0 {
+			t.Errorf("%s clean fixture: pass %v, rejections %+v", tc.runner, res.Pass, res.Rejections)
+		}
+
+		src, err := os.ReadFile(fmt.Sprintf("./testdata/%s_exception.json", tc.runner))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fixtures map[string]map[string]any
+		if err := json.Unmarshal(src, &fixtures); err != nil {
+			t.Fatal(err)
+		}
+		for _, fixture := range fixtures {
+			fixture[tc.list] = tc.addRejected(fixture[tc.list].([]any))
+		}
+		out, err := json.Marshal(fixtures)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), tc.runner+".json")
+		if err := os.WriteFile(path, out, 0644); err != nil {
+			t.Fatal(err)
+		}
+		res, events := run(path)
+		if !res.Pass {
+			t.Errorf("%s: an expected rejection for another reason failed the test: %s", tc.runner, res.Error)
+		}
+		if !reflect.DeepEqual(res.Rejections, tc.want) {
+			t.Errorf("%s: wrong rejections\nhave %+v\nwant %+v", tc.runner, res.Rejections, tc.want)
+		}
+		// The first rejected block's delivered list is the one its header
+		// commits to, so it is attached and the parallel processor runs, and
+		// rejects, the block.
+		want := executionEvent{Event: "balExecution", Block: 1, Hash: rejectedHash, Path: "parallel"}
+		if len(events) != 1 || events[0] != want {
+			t.Errorf("%s: events %+v, want [%+v]", tc.runner, events, want)
 		}
 	}
 }

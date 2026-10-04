@@ -47,6 +47,11 @@ type testResult struct {
 	Error string       `json:"error,omitempty"`
 	State *state.Dump  `json:"state,omitempty"`
 	Stats *execStats   `json:"benchStats,omitempty"`
+
+	// Rejections is set by blocktest and enginetest, empty when nothing was
+	// rejected. The runner reports each error as is; checking it against
+	// the fixture's expected exception is left to the consumer.
+	Rejections []tests.Rejection `json:"rejections,omitzero"`
 }
 
 func (r testResult) String() string {

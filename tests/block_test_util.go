@@ -52,6 +52,18 @@ import (
 // A BlockTest checks handling of entire blocks.
 type BlockTest struct {
 	json btJSON
+
+	// Rejections lists every block the chain rejected during Run, in fixture
+	// order, so a consumer can check why each was rejected.
+	Rejections []Rejection
+}
+
+// A Rejection is a test block or payload the client rejected, with the
+// client's own error.
+type Rejection struct {
+	Index int          `json:"index"`          // position in the fixture's blocks or engineNewPayloads
+	Hash  *common.Hash `json:"hash,omitempty"` // the block's hash, when the client computed one
+	Error string       `json:"error"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler interface.
@@ -188,6 +200,7 @@ type btHeaderMarshaling struct {
 }
 
 func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, sequential bool, tracer *tracing.Hooks, postCheck func(error, *core.BlockChain)) (result error) {
+	t.Rejections = []Rejection{}
 	config, ok := Forks[t.json.Network]
 	if !ok {
 		return UnsupportedForkError{t.json.Network}
@@ -327,6 +340,7 @@ func (t *BlockTest) insertBlocks(blockchain *core.BlockChain) ([]btBlock, error)
 	for bi, b := range t.json.Blocks {
 		cb, dropped, err := b.decode()
 		if err != nil {
+			t.Rejections = append(t.Rejections, Rejection{Index: bi, Error: err.Error()})
 			if b.BlockHeader == nil {
 				log.Info("Block decoding failed", "index", bi, "err", err)
 				continue // OK - block is supposed to be invalid, continue with next block
@@ -340,6 +354,8 @@ func (t *BlockTest) insertBlocks(blockchain *core.BlockChain) ([]btBlock, error)
 		i, err := blockchain.InsertChain(blocks)
 		endImport(cb.Hash())
 		if err != nil {
+			hash := cb.Hash()
+			t.Rejections = append(t.Rejections, Rejection{Index: bi, Hash: &hash, Error: err.Error()})
 			if b.BlockHeader == nil {
 				continue // OK - block is supposed to be invalid, continue with next block
 			} else {
