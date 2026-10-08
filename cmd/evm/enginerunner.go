@@ -48,6 +48,7 @@ var engineTestCommand = &cli.Command{
 		FuzzFlag,
 		WorkersFlag,
 		SequentialFlag,
+		CacheNoPrecompileFlag,
 		BALReportFlag,
 	}, traceFlags),
 }
@@ -116,7 +117,7 @@ func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		}
 		test := testsByName[name]
 		result := &testResult{Name: name, Pass: true}
-		if err := test.Run(rawdb.PathScheme, ctx.Bool(SequentialFlag.Name), tracer, attachEngineAPI, func(res error, chain *core.BlockChain) {
+		if err := test.Run(rawdb.PathScheme, ctx.Bool(SequentialFlag.Name), ctx.Bool(CacheNoPrecompileFlag.Name), tracer, attachEngineAPI, func(res error, chain *core.BlockChain) {
 			if ctx.Bool(DumpFlag.Name) {
 				if s, _ := chain.State(); s != nil {
 					result.State = dump(s)

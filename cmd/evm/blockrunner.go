@@ -44,6 +44,7 @@ var blockTestCommand = &cli.Command{
 		RunFlag,
 		WitnessCrossCheckFlag,
 		SequentialFlag,
+		CacheNoPrecompileFlag,
 		BALReportFlag,
 		FuzzFlag,
 		WorkersFlag,
@@ -119,7 +120,7 @@ func runBlockTest(ctx *cli.Context, fname string) ([]testResult, error) {
 		test := tests[name]
 		result := &testResult{Name: name, Pass: true}
 		var finalRoot *common.Hash
-		if err := test.Run(false, rawdb.PathScheme, ctx.Bool(WitnessCrossCheckFlag.Name), ctx.Bool(SequentialFlag.Name), tracer, func(res error, chain *core.BlockChain) {
+		if err := test.Run(false, rawdb.PathScheme, ctx.Bool(WitnessCrossCheckFlag.Name), ctx.Bool(SequentialFlag.Name), ctx.Bool(CacheNoPrecompileFlag.Name), tracer, func(res error, chain *core.BlockChain) {
 			if ctx.Bool(DumpFlag.Name) {
 				if s, _ := chain.State(); s != nil {
 					result.State = dump(s)

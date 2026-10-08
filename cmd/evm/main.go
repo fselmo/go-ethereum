@@ -78,6 +78,10 @@ var (
 		Name:  "bal.sequential",
 		Usage: "Execute every block sequentially, even one the EIP-7928 parallel processor could run. The delivered block access list is still validated.",
 	}
+	CacheNoPrecompileFlag = &cli.BoolFlag{
+		Name:  "cache.noprecompile",
+		Usage: "Disable precompile result caching",
+	}
 	BALReportFlag = &cli.BoolFlag{
 		Name:  "bal-report",
 		Usage: "Print one JSON line per executed block on stderr, naming the processor that ran it (EIP-7928 parallel or sequential) and why parallel was ruled out.",
