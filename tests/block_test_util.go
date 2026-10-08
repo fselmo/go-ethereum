@@ -199,7 +199,7 @@ type btHeaderMarshaling struct {
 	SlotNumber    *math.HexOrDecimal64
 }
 
-func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, sequential bool, tracer *tracing.Hooks, postCheck func(error, *core.BlockChain)) (result error) {
+func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, sequential bool, noPrecompileCache bool, tracer *tracing.Hooks, postCheck func(error, *core.BlockChain)) (result error) {
 	t.Rejections = []Rejection{}
 	config, ok := Forks[t.json.Network]
 	if !ok {
@@ -251,6 +251,7 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, sequentia
 			Tracer:                   tracer,
 			DisableParallelExecution: sequential,
 		},
+		NoPrecompileCache:       noPrecompileCache,
 		StatelessSelfValidation: witness,
 	}
 	if snapshotter {
