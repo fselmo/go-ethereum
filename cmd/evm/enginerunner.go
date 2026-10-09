@@ -1,4 +1,4 @@
-// Copyright 2023 The go-ethereum Authors
+// Copyright 2026 The go-ethereum Authors
 // This file is part of go-ethereum.
 //
 // go-ethereum is free software: you can redistribute it and/or modify
@@ -25,33 +25,35 @@ import (
 	"regexp"
 	"slices"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/eth"
+	"github.com/ethereum/go-ethereum/eth/catalyst"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/tests"
 	"github.com/urfave/cli/v2"
 )
 
-var blockTestCommand = &cli.Command{
-	Action:    blockTestCmd,
-	Name:      "blocktest",
-	Usage:     "Executes the given blockchain tests. Filenames can be fed via standard input (batch mode) or as arguments.",
+var engineTestCommand = &cli.Command{
+	Action:    engineTestCmd,
+	Name:      "enginetest",
+	Usage:     "Executes the given engine API tests. Filenames can be fed via standard input (batch mode) or as arguments.",
 	ArgsUsage: "<path>...",
 	Flags: slices.Concat([]cli.Flag{
 		DumpFlag,
 		HumanReadableFlag,
 		RunFlag,
-		WitnessCrossCheckFlag,
+		FuzzFlag,
+		WorkersFlag,
 		SequentialFlag,
 		CacheNoPrecompileFlag,
 		BALReportFlag,
-		FuzzFlag,
-		WorkersFlag,
 	}, traceFlags),
 }
 
-func blockTestCmd(ctx *cli.Context) error {
+func engineTestCmd(ctx *cli.Context) error {
 	if ctx.Bool(BALReportFlag.Name) {
 		reportExecution(log.Root().Handler())
 	}
@@ -62,7 +64,7 @@ func blockTestCmd(ctx *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		results, err := runFiles(ctx, files, runBlockTest)
+		results, err := runFiles(ctx, files, runEngineTest)
 		if err != nil {
 			return err
 		}
@@ -76,11 +78,10 @@ func blockTestCmd(ctx *cli.Context) error {
 		if len(fname) == 0 {
 			return nil
 		}
-		results, err := runBlockTest(ctx, fname)
+		results, err := runEngineTest(ctx, fname)
 		if err != nil {
 			return err
 		}
-		// During fuzzing, we report the result after every block
 		if !ctx.Bool(FuzzFlag.Name) {
 			report(ctx, results)
 		}
@@ -88,13 +89,13 @@ func blockTestCmd(ctx *cli.Context) error {
 	return nil
 }
 
-func runBlockTest(ctx *cli.Context, fname string) ([]testResult, error) {
+func runEngineTest(ctx *cli.Context, fname string) ([]testResult, error) {
 	src, err := os.ReadFile(fname)
 	if err != nil {
 		return nil, err
 	}
-	var tests map[string]*tests.BlockTest
-	if err = json.Unmarshal(src, &tests); err != nil {
+	var testsByName map[string]*tests.EngineTest
+	if err = json.Unmarshal(src, &testsByName); err != nil {
 		return nil, fmt.Errorf("unable to read test file %s: %w", fname, err)
 	}
 	re, err := regexp.Compile(ctx.String(RunFlag.Name))
@@ -103,51 +104,56 @@ func runBlockTest(ctx *cli.Context, fname string) ([]testResult, error) {
 	}
 	tracer := tracerFromFlags(ctx)
 
-	// Suppress INFO logs during fuzzing
 	if ctx.Bool(FuzzFlag.Name) {
 		discardLogs(ctx)
 	}
 
-	// Pull out keys to sort and ensure tests are run in order.
-	keys := slices.Sorted(maps.Keys(tests))
+	keys := slices.Sorted(maps.Keys(testsByName))
 
-	// Run all the tests.
 	var results []testResult
 	for _, name := range keys {
 		if !re.MatchString(name) {
 			continue
 		}
-		test := tests[name]
+		test := testsByName[name]
 		result := &testResult{Name: name, Pass: true}
-		var finalRoot *common.Hash
-		if err := test.Run(false, rawdb.PathScheme, ctx.Bool(WitnessCrossCheckFlag.Name), ctx.Bool(SequentialFlag.Name), ctx.Bool(CacheNoPrecompileFlag.Name), tracer, func(res error, chain *core.BlockChain) {
+		if err := test.Run(rawdb.PathScheme, ctx.Bool(SequentialFlag.Name), ctx.Bool(CacheNoPrecompileFlag.Name), tracer, attachEngineAPI, func(res error, chain *core.BlockChain) {
 			if ctx.Bool(DumpFlag.Name) {
 				if s, _ := chain.State(); s != nil {
 					result.State = dump(s)
 				}
 			}
-			// Capture final state root for end marker
-			if chain != nil {
-				root := chain.CurrentBlock().Root
-				finalRoot = &root
-			}
 		}); err != nil {
 			result.Pass, result.Error = false, err.Error()
 		}
 
-		// Always assign fork (regardless of pass/fail or tracer)
 		result.Fork = test.Network()
-		// Assign root if test succeeded
-		if result.Pass && finalRoot != nil {
-			result.Root = finalRoot
-		}
 		result.Rejections = test.Rejections
 
-		// When fuzzing, write results after every block
 		if ctx.Bool(FuzzFlag.Name) {
 			report(ctx, []testResult{*result})
 		}
 		results = append(results, *result)
 	}
 	return results, nil
+}
+
+// attachEngineAPI puts geth's engine API, eth/catalyst.ConsensusAPI, on a
+// test's chain and returns an in-process RPC client for it. The API is backed
+// by the chain alone (see eth.NewEngineBackend): no node, networking, RPC
+// transport or other services are started.
+func attachEngineAPI(chain *core.BlockChain, db ethdb.Database) (*rpc.Client, func(), error) {
+	backend := eth.NewEngineBackend(chain, db)
+	server := rpc.NewServer()
+	if err := server.RegisterName("engine", catalyst.NewConsensusAPIWithoutHeartbeat(backend)); err != nil {
+		backend.Downloader().Terminate()
+		return nil, nil, err
+	}
+	client := rpc.DialInProc(server)
+	release := func() {
+		client.Close()
+		server.Stop()
+		backend.Downloader().Terminate()
+	}
+	return client, release, nil
 }
