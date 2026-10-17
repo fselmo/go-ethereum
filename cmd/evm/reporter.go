@@ -137,8 +137,9 @@ type executionEvent struct {
 //
 // Core only sees that a block has no access list, so the reporter asks
 // blocktest whether the import running the block dropped its delivered list,
-// and reports that as bad-access-list whatever reason core gave. Under
-// --bal-withhold, every block is reported as withheld instead.
+// and reports that as bad-access-list whatever reason core gave, or as
+// withheld under --bal-withhold. A block delivered without a list keeps
+// core's reason.
 type executionReporter struct {
 	inner    slog.Handler
 	out      io.Writer
@@ -187,11 +188,11 @@ func (h *executionReporter) Handle(ctx context.Context, r slog.Record) error {
 		}
 		return true
 	})
-	switch {
-	case h.withheld:
-		event.Reason = "withheld"
-	case tests.AccessListDropped(event.Hash):
+	if tests.AccessListDropped(event.Hash) {
 		event.Reason = "bad-access-list"
+		if h.withheld {
+			event.Reason = "withheld"
+		}
 	}
 	out, err := json.Marshal(event)
 	if err != nil {
