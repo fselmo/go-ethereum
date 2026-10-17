@@ -514,7 +514,8 @@ func (t *BlockTest) validateImportedHeaders(cm *core.BlockChain, validBlocks []b
 
 // decode returns the fixture block, with its delivered access list attached
 // when that list is the one the header commits to, and whether a delivered
-// list was dropped. With withholdAccessList, no list is ever attached.
+// list was dropped. With withholdAccessList, no list is ever attached, and a
+// delivered one counts as dropped.
 func (bb *btBlock) decode(withholdAccessList bool) (*types.Block, bool, error) {
 	data, err := hexutil.Decode(bb.Rlp)
 	if err != nil {
@@ -524,14 +525,14 @@ func (bb *btBlock) decode(withholdAccessList bool) (*types.Block, bool, error) {
 	if err = rlp.DecodeBytes(data, &b); err != nil {
 		return nil, false, err
 	}
+	list, err := bb.accessList()
 	if withholdAccessList {
-		return &b, false, nil
+		return &b, list != nil || err != nil, nil
 	}
 	// The access list is delivered beside the block, as it is from a peer in
 	// sync, so it is used only if it is the one the header commits to.
 	// Otherwise it is dropped, like the downloader drops a peer's list, and
 	// the block is judged on its header with the list computed in execution.
-	list, err := bb.accessList()
 	h := b.BlockAccessListHash()
 	switch {
 	case err != nil:

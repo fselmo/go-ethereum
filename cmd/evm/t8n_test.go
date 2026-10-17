@@ -800,6 +800,55 @@ func TestBlockAccessListDropped(t *testing.T) {
 	}
 }
 
+// TestBlockAccessListWithheldWithoutList checks that --bal-withhold reports
+// withheld only for a block delivered with a list: a block without one keeps
+// the reason core gives it, as it does without the flag.
+func TestBlockAccessListWithheldWithoutList(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("./testdata/blocktest_bal.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures map[string]map[string]any
+	if err := json.Unmarshal(src, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range fixtures {
+		delete(test["blocks"].([]any)[0].(map[string]any), "blockAccessList")
+	}
+	out, err := json.Marshal(fixtures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "blocktest_bal_without_list.json")
+	if err := os.WriteFile(path, out, 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"blocktest", "--bal-report", path},
+		{"blocktest", "--bal-report", "--bal-withhold", path},
+	} {
+		tt := cmdtest.NewTestCmd(t, nil)
+		tt.Run("evm-test", args...)
+		stdout := tt.Output()
+		tt.WaitExit()
+		stderr := tt.StderrText()
+
+		var results []testResult
+		if err := json.Unmarshal(stdout, &results); err != nil {
+			t.Fatalf("%v: stdout is not a JSON result list: %v\n%s", args, err, stdout)
+		}
+		if len(results) != 1 || !results[0].Pass {
+			t.Fatalf("%v: unexpected results: %s", args, stdout)
+		}
+		events := balEvents(t, stderr)
+		want := executionEvent{Event: "balExecution", Block: 1, Hash: balBlockHash, Path: "sequential", Reason: "no-access-list"}
+		if len(events) != 1 || events[0] != want {
+			t.Fatalf("%v: events %+v, want [%+v]", args, events, want)
+		}
+	}
+}
+
 // TestBlockAccessListDroppedTwins checks that the report ties a dropped list to
 // the import that dropped it. Fixtures run in parallel import the same block,
 // some delivering its own list and some a tampered one, so every clean import
